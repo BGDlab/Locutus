@@ -1,0 +1,876 @@
+#!/usr/bin/env python
+# Copyright (c) 2019, The Children's Hospital of Philadelphia
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+# following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following
+#   disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the
+#   following disclaimer in the documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+# INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+# USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#############################################################################
+# NOTE: this has been adapted to also support Python 3, as derived from the original Python 2 source repo at:
+#   https://github.com/chop-dbhi/dicom-anon
+# using a snapshot up to latest known master branch commit, of Nov 30, 2017:
+#   https://github.com/chop-dbhi/dicom-anon/commit/64fa7bb79e4d38abda2c3c3b60c45c2f7d452662
+# Python 3 compatibility added (along with Python 2 support) at a python3 branch at:
+#   https://github.com/chop-dbhi/dicom-anon/tree/python3
+# with a Pull Request to merge back into the main branch of that public repo.
+
+import os
+import pydicom
+from pydicom.errors import InvalidDicomError
+from pydicom.tag import Tag
+from pydicom.dataelem import DataElement
+from pydicom.dataset import Dataset
+from pydicom.sequence import Sequence
+from pydicom.multival import MultiValue
+from pydicom.valuerep import DS
+from datetime import datetime
+import logging
+import json
+import re
+import sqlite3
+import shutil
+from functools import partial
+import argparse
+import time
+
+# NOTE: SHOW_LARGE_DEV_DEBUGS should ONLY be used on small demo datasets
+# like the single-Series, single-Instance Butterball, else tooooooo much info logged.
+#
+# NOTE: since all \n's will be squashed into stdout for the calling Popen() from Locutus,
+# also include a replaceable token string  (in this case, a `[REPLACEEOL]` at the start of each DEBUG line)
+# to allow subsequent "sed s/[REPLACEEOL]/\n/g" of the Locutus log, for better dicom_anon log visibiility.
+SHOW_LARGE_DEV_DEBUGS = False
+
+# NOTE: for alignment_mode_GCP_forBGD,
+# use EMPTY_DATETIME_RATHER_THAN_CLEAN support EMPTIED_[DATE/TIME] to use in replace_vr() for e.VR in <'DA', 'TM'>:
+# EMPTY_DATETIME_RATHER_THAN_CLEAN = True
+# leaving as initial default though:
+EMPTY_DATETIME_RATHER_THAN_CLEAN = False
+# BUT... r3m0 NOTE: in incorporating a new alignment_mode_GCP_forBGD flag into dicom_anon,
+# new settings such as EMPTY_DATETIME_RATHER_THAN_CLEAN & EXPAND_AUDIT_FROM_CORE
+# will require that a new Setup() method, or other such appropriate place, == __init__()
+#   update their corresponding values (e.g,, EMPTIED_DATE rather than CLEANED_DATE,
+#   and AUDIT_CORE to expand to include AUDIT_ADDITIONS_DEFAULT_DICOM_ANON)
+
+DEFAULT_EMPTY_STR = ''
+DEFAULT_CLEANED_STR = 'CLEANED'
+DEFAULT_EXCLUDE_SERIES_DESCS = ['screen save', 'basic text sr']
+DEFAULT_FORCE_REPLACEMENT_REDACTED_STR = 'REDACTED'
+DEFAULT_MODALITIES = ['mr', 'ct']
+
+# standard SQL commands:
+TABLE_EXISTS = 'SELECT name FROM sqlite_master WHERE name=?'
+CREATE_NON_LINKED_TABLE = 'CREATE TABLE if not exists %s (id INTEGER PRIMARY KEY AUTOINCREMENT, original, cleaned)'
+CREATE_LINKED_TABLE = 'CREATE TABLE if not exists %s (id INTEGER PRIMARY KEY AUTOINCREMENT, original, cleaned, study INTEGER, ' \
+                      'FOREIGN KEY(study) REFERENCES studyinstanceuid(id))'
+INSERT_OTHER = 'INSERT INTO %s (original, cleaned) VALUES (?, ?)'
+INSERT_LINKED = 'INSERT INTO %s (original, cleaned, study) VALUES (?, ?, ?)'
+GET_NON_LINKED = 'SELECT cleaned FROM %s WHERE original = ?'
+GET_LINKED = 'SELECT cleaned FROM %s WHERE original = ? AND study = ?'
+UPDATE_LINKED = 'UPDATE %s SET cleaned = ? WHERE cleaned = ? AND study = ?'
+STUDY_PK = 'SELECT id FROM studyinstanceuid WHERE cleaned = ?'
+NEXT_ID = 'SELECT max(id) FROM %s'
+#### WARNING: PARTICULARLY DESTRUCTIVE SQL COMMANDS (for --DB_delete): ####
+PRE_DB_DELETE_PRAGMA_SET = 'PRAGMA writable_schema = 1'
+DB_DELETE = 'DELETE FROM sqlite_master where type in (\'table\', \'index\', \'trigger\')'
+POST_DB_DELETE_PRAGMA_RESET = 'PRAGMA writable_schema = 0;'
+
+MEDIA_STORAGE_SOP_INSTANCE_UID = (0x2, 0x3)
+STUDY_INSTANCE_UID = (0x20, 0xD)
+STUDY_DESCR = (0x8, 0x1030)
+SERIES_INSTANCE_UID = (0x20, 0xE)
+SERIES_DESCR = (0x8, 0x103E)
+SOP_CLASS_UID = (0x8, 0x16)
+SOP_INSTANCE_UID = (0x8, 0x18)
+PIXEL_SPACING = (0x28, 0x30)
+IMAGER_PIXEL_SPACING = (0x18, 0x1164)
+WINDOW_CENTER = (0x28, 0x1050)
+WINDOW_WIDTH = (0x28, 0x1051)
+CALIBRATION_TYPE = (0x28, 0x402)
+CALIBRATION_DESCR = (0x28, 0x404)
+BURNT_IN = (0x28, 0x301)
+MODALITY = (0x8, 0x60)
+IMAGE_TYPE = (0x8, 0x8)
+MANUFACTURER = (0x8, 0x70)
+MANUFACTURER_MODEL_NAME = (0x8, 0x1090)
+PIXEL_DATA = (0x7fe0, 0x10)
+PHOTOMETRIC_INTERPRETATION = (0x28, 0x4)
+
+REMOVED_TEXT = '^^Audit Trail - Removed by dicom-anon - Audit Trail^^'
+
+ALLOWED_FILE_META = {  # Attributes taken from https://github.com/dicom/ruby-dicom
+  (0x2, 0x0): 1,  # File Meta Information Group Length
+  (0x2, 0x1): 1,  # Version
+  (0x2, 0x2): 1,  # Media Storage SOP Class UID
+  (0x2, 0x3): 1,  # Media Storage SOP Instance UID
+  (0x2, 0x10): 1,  # Transfer Syntax UID
+  (0x2, 0x12): 1,  # Implementation Class UID
+  (0x2, 0x13): 1  # Implementation Version Name
+}
+
+# NOTE: as part of alignment_mode_GCP_forBGD, AUDIT has been split into 2 parts:
+# 1) An AUDIT_CORE for use in all alignment modes, for which local PKey sequences shall be used,
+#   example "Study Instance 1", "Study Instance 2", etc., for each new such occurrence
+AUDIT_CORE = {
+    STUDY_INSTANCE_UID: 1,
+    SERIES_INSTANCE_UID: 1,
+    SOP_INSTANCE_UID: 1,
+    }
+# NOTE: as part of alignment_mode_GCP_forBGD, AUDIT has been split into 2 parts:
+# 2) And potential AUDIT_ADDITIONS_DEFAULT_DICOM_ANON, if not alignment_mode_GCP_forBGD:
+#   example, for GCP alignment mode, merely blanking Accession Number,
+#   but in default mode with these additions, will generate "Accession Number 1", etc.
+AUDIT_ADDITIONS_DEFAULT_DICOM_ANON = {
+    (0x8, 0x20): 1,  # Study Date
+    (0x8, 0x50): 1,  # Accession Number
+    (0x8, 0x80): 1,  # Institution name
+    (0x8, 0x81): 1,  # Institution Address
+    (0x8, 0x90): 1,  # Referring Physician's name
+    (0x8, 0x92): 1,  # Referring Physician's address
+    (0x8, 0x94): 1,  # Referring Physician's Phone
+    (0x8, 0x1048): 1,  # Physician(s) of Record
+    (0x8, 0x1049): 1,  # Physician(s) of Record Identification
+    (0x8, 0x1050): 1,  # Performing Physician's Name
+    (0x8, 0x1060): 1,  # Reading Physicians Name
+    (0x8, 0x1070): 1,  # Operator's Name
+    (0x8, 0x1010): 1,  # Station name
+    (0x10, 0x10): 1,  # Patient's name
+    (0x10, 0x1005): 1,  # Patient's Birth Name
+    (0x10, 0x20): 1,  # Patient's ID
+    (0x10, 0x30): 1,  # Patient's Birth Date
+}
+# NOTE: if alignment_mode_GCP_forBGD, DicomAnon:__init__() shall override the following.
+# Further noting that alignment_mode_GCP_forBGD isn't read in until __init__(), be sure
+# to NOT start off with EXPAND_AUDIT_FROM_CORE = True; only add that in __init__():
+#####
+# for default dicom_anon operation, use: EXPAND_AUDIT_FROM_CORE = True
+# but to align with the BGDGCP-compliance , use: EXPAND_AUDIT_FROM_CORE = False
+EXPAND_AUDIT_FROM_CORE = False
+AUDIT = AUDIT_CORE
+# NOTE: if alignment_mode_GCP_forBGD, EXPAND_AUDIT_FROM_CORE will be left as False;
+#   else, if !alignment_mode_GCP_forBGD, __init__() will perform:
+#    AUDIT.update(AUDIT_ADDITIONS_DEFAULT_DICOM_ANON)
+#####
+
+#####
+CLEANED_DATE = '19010101'
+CLEANED_TIME = '000000.00'
+# NOTE: if alignment_mode_GCP_forBGD, __init__() will set:
+#    EMPTY_DATETIME_RATHER_THAN_CLEAN=True
+#####
+EMPTIED_DATE = ''
+EMPTIED_TIME = ''
+
+logger = logging.getLogger('dicom_anon')
+logger.setLevel(logging.INFO)
+
+
+class Audit(object):
+
+    def __init__(self, filename):
+        self.db = sqlite3.connect(filename)
+        self.cursor = self.db.cursor()
+        if not os.path.isfile(filename):
+            with self.db as db:
+                # create the table that holds the studyinstance because others will refer to it
+                table_name = 'studyinstanceuid'
+                db.execute(CREATE_NON_LINKED_TABLE % table_name)
+
+    def DB_delete(self):
+        # NOTE: DB_delete() can be useful when switching from a Python 2 environment to a Python 3 environment,
+        # to clear out the previously generated (e.g., Python 2) strings.
+        with self.db as db:
+            # delete all existing tables in this DB:
+            db.execute(PRE_DB_DELETE_PRAGMA_SET)
+            db.execute(DB_DELETE)
+            db.execute(POST_DB_DELETE_PRAGMA_RESET)
+            # and a 1-second safety pause to briefly allow things to settle:
+            time.sleep(1)
+
+    @staticmethod
+    def tag_to_table(tag):
+        return re.sub('\W+', '', tag.name.lower())
+
+    def close(self):
+        self.db.close()
+
+    def table_exists(self, table):
+        self.cursor.execute(TABLE_EXISTS, (table,))
+        results = self.cursor.fetchall()
+        return len(results) > 0
+
+    def get_study_pk(self, cleaned):
+        self.cursor.execute(STUDY_PK, (str(cleaned),))
+        results = self.cursor.fetchall()
+        return results[0][0]
+
+    def get_next_pk(self, tag):
+        table_name = self.tag_to_table(tag)
+        if not self.table_exists(table_name):
+            return 1
+        self.cursor.execute(NEXT_ID % table_name)
+        results = self.cursor.fetchall()
+        if results[0][0]:
+            return int(results[0][0] + 1)
+        else:
+            return 1
+
+    def get(self, tag, study_uid_pk=None):
+        table_name = self.tag_to_table(tag)
+        value = None
+        if tag.VM > 1:
+            original = [str(val) for val in tag.value]
+            original = '/'.join(original)
+        else:
+            original = tag.value
+
+        if not self.table_exists(table_name):
+            return None
+
+        if tag.name.lower() == 'study instance uid':
+            self.cursor.execute(GET_NON_LINKED % table_name, (str(original),))
+            results = self.cursor.fetchall()
+            if len(results):
+                value = results[0][0]
+        else:
+            self.cursor.execute(GET_LINKED % table_name, (str(original), study_uid_pk))
+            results = self.cursor.fetchall()
+            if len(results):
+                value = results[0][0]
+
+        return value
+
+    def update(self, tag, cleaned, study_uid_pk):
+        table_name = self.tag_to_table(tag)
+        if tag.VM > 1:
+            original = [str(val) for val in tag.value]
+            original = '/'.join(original)
+        else:
+            original = tag.value
+        with self.db as db:
+            db.execute(UPDATE_LINKED % table_name, (str(cleaned), str(original), study_uid_pk))
+
+
+    def save(self, tag, cleaned, study_uid_pk=None):
+        table_name = self.tag_to_table(tag)
+        if not self.table_exists(table_name):
+            with self.db as db:
+                if tag.name.lower() == 'study instance uid':
+                    db.execute(CREATE_NON_LINKED_TABLE % table_name)
+                else:
+                    db.execute(CREATE_LINKED_TABLE % table_name)
+
+        if tag.VM > 1:
+            original = [str(val) for val in tag.value]
+            original = '/'.join(original)
+        else:
+            original = tag.value
+
+        # Table exists
+        with self.db as db:
+            if tag.name.lower() == 'study instance uid':
+                db.execute(INSERT_OTHER % table_name, (str(original), str(cleaned)))
+            else:
+                db.execute(INSERT_LINKED % table_name, (str(original), str(cleaned), study_uid_pk))
+
+
+
+class DicomAnon(object):
+
+    def __init__(self, **kwargs):
+        self.profile = kwargs.get('profile', 'basic')
+        self.spec_file = kwargs.get('spec_file', os.path.join(os.path.dirname(__file__), 'spec_files',
+                                                              'annexe_ext.dat'))
+        self.white_list_file = kwargs.get('white_list', None)
+        self.audit_file = kwargs.get('audit_file', 'identity.db')
+        self.log_file = kwargs.get('log_file', 'dicom_anon.log')
+        self.quarantine = kwargs.get('quarantine', 'quarantine')
+        self.modalities = [string.lower() for string in kwargs.get('modalities', DEFAULT_MODALITIES)[0].split(',')]
+        self.exclude_series_descs = [string.strip().lower() for string in kwargs.get('exclude_series_descs', DEFAULT_EXCLUDE_SERIES_DESCS)[0].split(',')]
+        self.force_replacement_str = kwargs.get('force_replace', DEFAULT_FORCE_REPLACEMENT_REDACTED_STR)
+        self.do_not_clean = kwargs.get('do_not_clean', False)
+        self.org_root = kwargs.get('org_root', '5.555.5')
+        self.rename = kwargs.get('rename', False)
+        self.keep_overlay = kwargs.get('keep_overlay', False)
+        self.keep_private_tags = kwargs.get('keep_private_tags', True)
+        self.keep_csa_headers = kwargs.get('keep_csa_headers', False)
+        self.relative_dates = kwargs.get('relative_dates', None)
+        self.DB_delete = kwargs.get('DB_delete', False)
+        self.alignment_mode_GCP_forBGD = kwargs.get('alignment_mode_GCP_forBGD', False)
+
+        global EMPTY_DATETIME_RATHER_THAN_CLEAN
+        global EXPAND_AUDIT_FROM_CORE
+
+        if self.alignment_mode_GCP_forBGD:
+            print('INFO: DicomAnon::__init__() using alignment_mode_GCP_forBGD... Hello, Brain-Gene Development Lab!  ', flush=True)
+            # NOTE: to use EMPTIED_[DATE/TIME] in replace_vr() for e.VR in <'DA', 'TM'>:
+            EMPTY_DATETIME_RATHER_THAN_CLEAN = True
+            # and leave AUDIT as AUDIT_CORE, only:
+            EXPAND_AUDIT_FROM_CORE = False
+        else:
+            print('INFO: DicomAnon::__init__() using DEFAULT dicom_anon behaviour as alignment_mode.  ', flush=True)
+            # for NOT self.alignment_mode_GCP_forBGD:
+            EXPAND_AUDIT_FROM_CORE = True
+            # explicitly keeping/setting to default:
+            EMPTY_DATETIME_RATHER_THAN_CLEAN = False
+
+        if EXPAND_AUDIT_FROM_CORE:
+            print('INFO: DicomAnon::__init__() using EXPAND_AUDIT_FROM_CORE...  ', flush=True)
+            AUDIT.update(AUDIT_ADDITIONS_DEFAULT_DICOM_ANON)
+
+        if self.white_list_file is not None:
+            try:
+                with open(self.white_list_file, 'r') as white_list_handle:
+                    self.white_list = self.convert_json_white_list(json.load(white_list_handle))
+            except IOError:
+                raise Exception('Error opening white list file.')
+
+        self.spec = self.parse_spec_file(self.spec_file)
+
+        self.audit = Audit(self.audit_file)
+
+        if self.DB_delete:
+            logger.warning('WARNING: dicom_anon called with --DB_delete==%s; resetting all cleaned counters.' % self.DB_delete)
+            self.audit.DB_delete()
+
+        self.current_uid = None
+
+        logger.handlers = []
+        if not self.log_file:
+            self.log = logging.StreamHandler()
+        else:
+            self.log = logging.FileHandler(self.log_file)
+
+        self.log.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.log.setFormatter(formatter)
+        logger.addHandler(self.log)
+
+    @staticmethod
+    def get_first_date(target_dir, tags=((0x0010, 0x0030),)):
+        min_date = {tag: datetime(3000, 1, 1) for tag in tags}
+        for root, _, files in os.walk(target_dir):
+            filename = sorted(files)[0]
+            try:
+                ds = pydicom.read_file(open(os.path.join(root, filename)), stop_before_pixels=True)
+            except (IOError, InvalidDicomError):
+                continue
+            for tag in tags:
+                try:
+                    this_date = datetime.strptime(ds[tag].value, '%Y%m%d')
+                except (KeyError, ValueError):
+                    continue
+                if this_date < min_date[tag]:
+                    min_date[tag] = this_date
+        return min_date
+
+    @staticmethod
+    def convert_json_white_list(h):
+        value = {}
+        for tag in list(h.keys()):
+            a, b = tag.split(',')
+            t = (int(a, 16), int(b, 16))
+            value[t] = [re.sub(' +', ' ', re.sub('[-_,.]', '', x.lower().strip())) for x in h[tag]]
+        return value
+
+    @staticmethod
+    def parse_spec_file(filename):
+        spec_dict = dict()
+        tag = None
+        with open(filename) as spec_file:
+            for index, line in enumerate(spec_file):
+                line_arr = line.strip(' \n').split('\t')
+                if index % 2 == 0:
+                    tag = (int('0x%s' % line_arr[1].split(',')[0].strip()[1:], 16),
+                           int('0x%s' % line_arr[1].split(',')[1].strip()[:-1], 16))
+                else:
+                    spec_dict[tag] = line_arr
+        return spec_dict
+
+    def close_all(self):
+        if self.log_file:
+            self.log.flush()
+            self.log.close()
+        self.audit.close()
+
+    # Determines destination of cleaned/quarantined file based on
+    # source folder
+    @staticmethod
+    def destination(source, dest, root):
+        if dest.startswith(root):
+            raise Exception('Destination directory cannot be inside or equal to source directory')
+        if not source.startswith(root):
+            raise Exception('The file to be moved must be in the root directory')
+        return os.path.normpath(os.path.join(dest, os.path.relpath(os.path.dirname(source), root)))
+
+    def quarantine_file(self, filepath, ident_dir, reason):
+        full_quarantine_dir = self.destination(filepath, self.quarantine, ident_dir)
+        if not os.path.exists(full_quarantine_dir):
+            os.makedirs(full_quarantine_dir)
+        quarantine_name = os.path.join(full_quarantine_dir, os.path.basename(filepath))
+        logger.info('%s will be moved to quarantine directory due to: %s' % (filepath, reason))
+        shutil.copyfile(filepath, quarantine_name)
+
+    # Return true if file should be quarantined
+    # TODO the presence of the following attributes
+    # indicates the file is a secondary capture which may
+    # be something to check for if not visually inspecting
+    # images (which really needs to be done anyway)
+    # (0x0018,0x1010) - Secondary Capture Device ID
+    # (0x0018,0x1012) - Date of Secondary Capture
+    # (0x0018,0x1014) - Time of Secondary Capture
+    # (0x0018,0x1016) - Secondary Capture Device Manufacturer
+    # (0x0018,0x1018) - Secondary Capture Device Manufacturer's Model Name
+    # (0x0018,0x1019) - Secondary Capture Device Software Versions
+    def check_quarantine(self, ds):
+
+        if SERIES_DESCR in ds and ds[SERIES_DESCR].value is not None:
+            series_desc = ds[SERIES_DESCR].value.strip().lower()
+            if 'patient protocol' in series_desc:
+                return True, 'patient protocol'
+            elif 'save' in series_desc:  # from link in comment below
+                return True, 'Excluding likely screen capture (SeriesDescription==\'{0}\')'.format(series_desc)
+            else:
+                for xsd in self.exclude_series_descs:
+                    if xsd in series_desc.strip().lower():
+                        return True, 'Excluding SeriesDescription \'{0}\' as per exclusion type \'{1}\''.format(series_desc, xsd)
+
+        if MODALITY in ds:
+            modality = ds[MODALITY]
+            if modality.VM == 1:
+                modality = [modality.value]
+            for m in modality:
+                if m is None or not m.lower() in self.modalities:
+                    return True, 'modality (\'{0}\') not in allowed list of modalities (==\'{1}\')'.format(m, self.modalities)
+
+        if MODALITY not in ds:
+            return True, 'Modality missing'
+        ##### BURNTIN should return True
+        #if BURNT_IN in ds and ds[BURNT_IN].value is not None:
+            #burnt_in = ds[BURNT_IN].value
+            #if burnt_in.strip().lower() in ['yes', 'y']:
+                #return False, 'burnt-in data'
+
+        # The following were taken from https://wiki.cancerimagingarchive.net/download/attachments/
+        # 3539047/pixel-checker-filter.script?version=1&modificationDate=1333114118541&api=v2
+        if IMAGE_TYPE in ds:
+            image_type = ds[IMAGE_TYPE]
+            if image_type.VM == 1:
+                image_type = [image_type.value]
+            for i in image_type:
+                if i is not None and 'save' in i.strip().lower():
+                    return True, 'Likely screen capture (image_type=={0})'.format(i)
+
+        if MANUFACTURER in ds:
+            manufacturer = ds[MANUFACTURER].value.strip().lower()
+            if 'north american imaging, inc' in manufacturer or 'pacsgear' in manufacturer:
+                return True, 'Manufacturer is suspect'
+
+        if MANUFACTURER_MODEL_NAME in ds:
+            model_name = ds[MANUFACTURER_MODEL_NAME].value.strip().lower()
+            if 'the dicom box' in model_name:
+                return True, 'Manufacturer model name is suspect'
+        return False, ''
+
+    def generate_uid(self):
+
+        while True:
+            n = datetime.now()
+            new_guid = '%s.%s.%s.%s.%s.%s.%s' % (self.org_root, n.year, n.month, n.day,
+                                                 n.minute, n.second, n.microsecond)
+            if new_guid != self.current_uid:
+                self.current_uid = new_guid
+                break
+        return self.current_uid
+
+    def clean_cb(self, ds, e, study_pk):
+        if self.enforce_profile(ds, e, study_pk):
+            return
+        if self.vr_handler(ds, e):
+            return
+        if not self.keep_overlay and self.overlay_data_handler(ds, e):
+            return
+        if self.overlay_comment_handler(ds, e):
+            return
+        if self.curve_data_handler(ds, e):
+            return
+        self.personal_handler(ds, e)
+
+    def enforce_profile(self, ds, e, study_pk):
+        white_listed = False
+        cleaned = None
+        if self.profile == 'clean':
+            # If it's in the ANNEX, we need to specifically be able to clean it
+            if (e.tag in list(self.spec.keys()) and self.spec[(e.tag.group, e.tag.element)][9] == 'C') \
+                    or not (e.tag in list(self.spec.keys())):
+                white_listed = self.white_list_handler(e)
+                if not white_listed:
+                    cleaned = self.basic(ds, e, study_pk)
+            else:
+                cleaned = self.basic(ds, e, study_pk)
+        else:
+            cleaned = self.basic(ds, e, study_pk)
+
+        if cleaned is not None and e.tag in ds and ds[e.tag].value is not None:
+            ds[e.tag].value = cleaned
+
+        # Tell our caller if we cleaned this element
+        if e.tag in list(self.spec.keys()) or white_listed:
+            return True
+
+        return False
+
+    # Returning None from this function signifies that e was not altered
+    def basic(self, ds, e, study_pk):
+        if SHOW_LARGE_DEV_DEBUGS:
+            print('[REPLACEEOL]dicom_anon: r3m0 DEBUG: basic() called with e.VR={0}, e.tag={1}, e.name=\"{2}\"\n'.format(
+                e.VR, e.tag, e.name), flush=True)
+        # Sequences are currently just removed
+        # there is no audit support
+        if e.VR == 'SQ':
+            del ds[e.tag]
+            return REMOVED_TEXT
+        cleaned = None
+        value = ds[e.tag].value
+        prior_cleaned = self.audit.get(e, study_uid_pk=study_pk)
+        if SHOW_LARGE_DEV_DEBUGS:
+            print('[REPLACEEOL]dicom_anon: r3m0 DEBUG: basic() for e.VR=\"{0}\", e.tag=\"{1}\", e.name=\"{2}\", prior_cleaned == \"{3}\"\n'.format(
+                    e.VR, e.tag, e.name, prior_cleaned), flush=True)
+        # pydicom does not want to write unicode strings back to the files
+        # but sqlite is returning unicode, test and convert
+        if prior_cleaned:
+            prior_cleaned = str(prior_cleaned)
+        if e.tag in list(self.spec.keys()):
+            rule = self.spec[(e.tag.group, e.tag.element)][2][0]  # For now we aren't going to worry about
+            if SHOW_LARGE_DEV_DEBUGS:
+                    print('[REPLACEEOL]dicom_anon: r3m0 DEBUG: basic() for e.VR=\"{0}\", e.tag=\"{1}\", e.name=\"{2}\", prior_cleaned == \"{3}\" '\
+                        'and e.tag in list(spec.keys), rule=\"{4}\"\n'.format(
+                        e.VR, e.tag, e.name, prior_cleaned, rule), flush=True)
+            # IOD type conformance, just do the first option
+            # beginning with an initial default cleaned of the same value if (do_not_clean and not rule == 'R'):
+            cleaned = value
+            if rule == 'R':
+                # NOTE: When so specified, the 'R' ("REPLACE") rule shall supercede all other rules:
+                cleaned = self.force_replacement_str
+                if SHOW_LARGE_DEV_DEBUGS:
+                    print('[REPLACEEOL]dicom_anon: r3m0 DEBUG: basic() for e.VR=\"{0}\", e.tag=\"{1}\", e.name=\"{2}\", prior_cleaned == \"{3}\" '\
+                        'and e.tag in list(spec.keys), R-rule=\"{4}\" gives cleaned=\"{5}\"\n'.format(
+                        e.VR, e.tag, e.name, prior_cleaned, rule, cleaned), flush=True)
+            elif not self.do_not_clean:
+                if rule == 'D':
+                    cleaned = prior_cleaned or self.replace_vr(e)
+                if rule == 'Z':
+                    cleaned = prior_cleaned or self.replace_vr(e)
+                if rule == 'X':
+                    del ds[e.tag]
+                    cleaned = prior_cleaned or REMOVED_TEXT
+                if rule == 'K':
+                    cleaned = value
+                if rule == 'U':
+                    cleaned = prior_cleaned or self.generate_uid()
+                if SHOW_LARGE_DEV_DEBUGS:
+                    print('[REPLACEEOL]dicom_anon: r3m0 DEBUG: basic() for e.VR=\"{0}\", e.tag=\"{1}\", e.name=\"{2}\", prior_cleaned == \"{3}\" '\
+                        'and e.tag in list(spec.keys), NOT do_not_clean rule=\"{4}\" gives cleaned=\"{5}\"\n'.format(
+                        e.VR, e.tag, e.name, prior_cleaned, rule, cleaned), flush=True)
+
+        if e.tag in list(AUDIT.keys()):
+            if cleaned is not None and cleaned != value and prior_cleaned is None and not (e.tag == STUDY_INSTANCE_UID):
+                self.audit.save(e, cleaned, study_uid_pk=study_pk)
+
+        return cleaned
+
+    # NOTE: if alignment_mode_GCP_forBGD, EMPTY_DATETIME_RATHER_THAN_CLEAN shall already be set,
+    # giving either EMPTIED_[DATE/TIME] or else CLEANED_[DATE/TIME] to e.VR in <'DA', 'TM'>
+    def replace_vr(self, e):
+        if e.VR == 'DT':
+            cleaned = EMPTIED_TIME if EMPTY_DATETIME_RATHER_THAN_CLEAN else CLEANED_TIME
+        elif e.VR == 'DA':
+            cleaned = EMPTIED_DATE if EMPTY_DATETIME_RATHER_THAN_CLEAN else CLEANED_DATE
+        elif e.VR == 'TM':
+            cleaned = EMPTIED_TIME if EMPTY_DATETIME_RATHER_THAN_CLEAN else CLEANED_TIME
+        elif e.VR == 'UI':
+            cleaned = self.generate_uid()
+        else:
+            #####
+            # NOTE: if alignment_mode_GCP_forBGD, EXPAND_AUDIT_FROM_CORE shall already be set,
+            # and e.VR == 'SH' should fall here for Accession Number 1, etc.
+            # w/ rule=Z from basic():
+            #   if rule == 'Z':
+            #       cleaned = prior_cleaned or self.replace_vr(e)
+            # all thanks to being a part of AUDIT, up top.
+            # NOTE: when alignment_mode_GCP_forBGD, reducing AUDIT to minimal AUDIT_CORE of:
+            # STUDY_INSTANCE_UID, SERIES_INSTANCE_UID, and SOP_INSTANCE_UID
+            #####
+            if e.tag in list(AUDIT.keys()) and e.name and len(e.name):
+                cleaned = str('%s %d' % (e.name, self.audit.get_next_pk(e)))
+                if SHOW_LARGE_DEV_DEBUGS:
+                    print('[REPLACEEOL]dicom_anon: r3m0 DEBUG: replace_vr() Getting next PK for:  e.VR=\"{0}\", e.tag=\"{1}\", e.name=\"{2}\", '\
+                        'giving PK cleaned=\"{3}\"'.format(
+                        e.VR, e.tag, e.name, cleaned), flush=True)
+            else:
+                # NOTE: -r3m0 4/07/2025: added DEFAULT_EMPTY_STR if EMPTY_DATETIME_RATHER_THAN_CLEAN:
+                cleaned = DEFAULT_EMPTY_STR if EMPTY_DATETIME_RATHER_THAN_CLEAN else DEFAULT_CLEANED_STR
+                if SHOW_LARGE_DEV_DEBUGS:
+                    print('[REPLACEEOL]dicom_anon: r3m0 DEBUG: replace_vr() NO AUDIT.keys()/name for:  e.VR=\"{0}\", e.tag=\"{1}\", e.name=\"{2}\", '\
+                        'giving ALT cleaned=\"{3}\"'.format(
+                        e.VR, e.tag, e.name, cleaned), flush=True)
+        return cleaned
+
+    @staticmethod
+    def vr_handler(ds, e):
+        if e.VR in ['PN', 'CS', 'UI', 'DA', 'DT', 'LT', 'UN', 'UT', 'ST', 'AE', 'LO', 'TM', 'SH', 'AS', 'OB',
+                    'OW'] and e.tag != PIXEL_DATA:
+            del ds[e.tag]
+            return True
+        return False
+
+    # Remove group 0x1000 which contains personal information
+    @staticmethod
+    def personal_handler(ds, e):
+        if e.tag.group == 0x1000:
+            del ds[e.tag]
+            return True
+        return False
+
+    # Curve data is (0x50xx,0xxxxx)
+    @staticmethod
+    def curve_data_handler(ds, e):
+        if (e.tag.group / 0xFF) == 0x50:
+            del ds[e.tag]
+            return True
+        return False
+
+    # Overlay comment is (0x60xx,0x4000)
+    @staticmethod
+    def overlay_comment_handler(ds, e):
+        if (e.tag.group / 0xFF) == 0x60 and e.tag.element == 0x4000:
+            del ds[e.tag]
+            return True
+        return False
+
+    # Overlay data is and (0x60xx, 0x3000)
+    @staticmethod
+    def overlay_data_handler(ds, e):
+        if (e.tag.group / 0xFF) == 0x60 and e.tag.element == 0x3000:
+            del ds[e.tag]
+            return True
+        return False
+
+    @staticmethod
+    def clean_meta(ds, e):
+        if e.VR == 'SQ':
+            del ds[e.tag]
+        elif ALLOWED_FILE_META.get((e.tag.group, e.tag.element), None):
+            return
+        else:
+            del ds[e.tag]
+
+    def white_list_handler(self, e):
+        if self.white_list.get((e.tag.group, e.tag.element), None):
+            if not re.sub(' +', ' ', re.sub('[-_,.]', '', e.value.lower().strip())) \
+                    in self.white_list[(e.tag.group, e.tag.element)]:
+                logger.info('%s not in white list for %s' % (e.value, e.name))
+                return False
+            return True
+        return False
+
+    def anonymize(self, ds):
+        # anonymize study_uid, save off id
+
+        cleaned_study_uid = self.audit.get(ds[STUDY_INSTANCE_UID])
+        if cleaned_study_uid is None:
+            cleaned_study_uid = self.generate_uid()
+            self.audit.save(ds[STUDY_INSTANCE_UID], cleaned_study_uid)
+
+        # Get pk of study_uid
+        study_pk = self.audit.get_study_pk(cleaned_study_uid)
+
+        if not self.keep_private_tags:
+            ds.remove_private_tags()
+
+        # Walk entire file
+        ds.walk(partial(self.clean_cb, study_pk=study_pk))
+
+        # Fix file meta data portion
+        if MEDIA_STORAGE_SOP_INSTANCE_UID in ds.file_meta:
+            try:
+                ds.file_meta[MEDIA_STORAGE_SOP_INSTANCE_UID].value = ds[SOP_INSTANCE_UID].value
+            except Exception as e:
+                logger.error('Caught exception trying to set the value of MEDIA_STORAGE_SOP_INSTANCE_UID to that of SOP_INSTANCE_UID. Error was: %s' % e)
+                logger.info('%s will be moved to quarantine directory due to: %s' % (filepath, reason))
+
+        ds.file_meta.walk(self.clean_meta)
+        return ds, study_pk
+
+    def run(self, ident_dir, clean_dir):
+        # Get first date for tags set in relative_dates
+        date_adjust = None
+        audit_date_correct = None
+        if self.relative_dates is not None:
+            date_adjust = {tag: first_date - datetime(1970, 1, 1) for tag, first_date
+                           in list(self.get_first_date(ident_dir, self.relative_dates).items())}
+        for root, _, files in os.walk(ident_dir):
+            for filename in files:
+                if filename.startswith('.'):
+                    continue
+                source_path = os.path.join(root, filename)
+                try:
+                    ds = pydicom.read_file(source_path)
+                except IOError:
+                    logger.error('Error reading file %s' % source_path)
+                    self.close_all()
+                    return False
+                except InvalidDicomError:  # DICOM formatting error
+                    self.quarantine_file(source_path, ident_dir, 'Could not read DICOM file.')
+                    continue
+
+                move, reason = self.check_quarantine(ds)
+
+                if move:
+                    self.quarantine_file(source_path, ident_dir, reason)
+                    continue
+
+                # Store adjusted dates for recovery
+                obfusc_dates = None
+                if self.relative_dates is not None:
+                    obfusc_dates = {tag: datetime.strptime(ds[tag].value, '%Y%m%d') - date_adjust[tag]
+                                    for tag in self.relative_dates}
+
+                # Keep CSA Headers
+                csa_headers = dict()
+                if self.keep_csa_headers and (0x29, 0x10) in ds:
+                    csa_headers[(0x29, 0x10)] = ds[(0x29, 0x10)]
+                    for offset in [0x10, 0x20]:
+                        elno = (0x10*0x0100) + offset
+                        csa_headers[(0x29, elno)] = ds[(0x29, elno)]
+
+                destination_dir = self.destination(source_path, clean_dir, ident_dir)
+                if SHOW_LARGE_DEV_DEBUGS:
+                    print('r3m0 dicom_anon run().  destination_dir={0}'.format(destination_dir))
+                if not os.path.exists(destination_dir):
+                    if SHOW_LARGE_DEV_DEBUGS:
+                        print('r3m0 dicom_anon run().  MAKING destination_dir={0}'.format(destination_dir))
+                    os.makedirs(destination_dir)
+                try:
+                    if SHOW_LARGE_DEV_DEBUGS:
+                        print('r3m0 dicom_anon run().  ABOUT to anonymize to destination_dir={0}'.format(destination_dir))
+                    ds, study_pk = self.anonymize(ds)
+                except ValueError as e:
+                    self.quarantine_file(source_path, ident_dir, 'Error running anonymize function. There may be a '
+                                                                 'DICOM element value that does not match the specified'
+                                                                 ' Value Representation (VR). Error was: %s' % e)
+                    continue
+
+                # Recover relative dates
+                if self.relative_dates is not None:
+                    for tag in self.relative_dates:
+                        if audit_date_correct != study_pk and tag in list(AUDIT.keys()):
+                            self.audit.update(ds[tag], obfusc_dates[tag].strftime('%Y%m%d'), study_pk)
+                        ds[tag].value = obfusc_dates[tag].strftime('%Y%m%d')
+                    audit_date_correct = study_pk
+
+                # Restore CSA Header
+                if len(csa_headers) > 0:
+                    for tag in csa_headers:
+                        ds[tag] = csa_headers[tag]
+
+                # Set Patient Identity Removed to YES
+                t = Tag((0x12, 0x62))
+                ds[t] = DataElement(t, 'CS', 'YES')
+
+                # Set the De-identification method code sequence
+                method_ds = Dataset()
+                t = pydicom.tag.Tag((0x8, 0x102))
+                if self.profile == 'clean':
+                    method_ds[t] = DataElement(t, 'DS', MultiValue(DS, ['113100', '113105']))
+                else:
+                    method_ds[t] = DataElement(t, 'DS', MultiValue(DS, ['113100']))
+                t = pydicom.tag.Tag((0x12, 0x64))
+                ds[t] = DataElement(t, 'SQ', Sequence([method_ds]))
+
+                out_filename = ds[SOP_INSTANCE_UID].value if self.rename else filename
+                clean_name = os.path.join(destination_dir, out_filename)
+                try:
+                    ds.save_as(clean_name)
+                except IOError:
+                    logger.error('Error writing file %s' % clean_name)
+                    self.close_all()
+                    return False
+
+        self.close_all()
+        return True
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument(dest='ident_dir', type=str)
+    parser.add_argument(dest='clean_dir', type=str)
+    parser.add_argument('-q', '--quarantine', type=str, default='quarantine', help='Quarantine directory')
+    parser.add_argument('-w', '--white_list', type=str, default=None, help='White list json file')
+    parser.add_argument('-a', '--audit_file', type=str, default='identity.db', help='Name of sqlite audit file')
+    parser.add_argument('-m', '--modalities', type=str, nargs=1, default=DEFAULT_MODALITIES,
+                        help='Comma separated list of allowed modalities. Defaults to {0}'.format(",".join(DEFAULT_MODALITIES)))
+    parser.add_argument('-x', '--exclude_series_descs', type=str, nargs=1, default=DEFAULT_EXCLUDE_SERIES_DESCS,
+                        help='Comma separated list of all series to exclude by their series description name (regardless of case). Defaults to {0}'.format(",".join(DEFAULT_EXCLUDE_SERIES_DESCS)))
+    # alignment_mode_GCP_forBGD: to align with the output from the Locutus GCP De-ID module:
+    parser.add_argument('-G', '--alignment_mode_GCP_forBGD', action='store_true', default=False,
+                            help='to align De-ID output w/ the Locutus GCP module De-ID Profile for BGD, the Brain-Gene Development Lab')
+    # Force REPLACE string for any fields setup with new rule 'R':
+    parser.add_argument('-f', '--force_replace', type=str, default=DEFAULT_FORCE_REPLACEMENT_REDACTED_STR,
+                        help='Replacement string for any fields with in-house rule R. Defaults to {0}'.format(DEFAULT_FORCE_REPLACEMENT_REDACTED_STR))
+    # option to DO NOT CLEAN, to ONLY force_replace & exclude_series_descs,
+    # and to leave all else as is except for replaced tags & excluded series:
+    parser.add_argument('-d', '--do_not_clean', action='store_true', default=False,
+                            help='do NOT apply general tag value cleaning;'
+                                'instead only do any specified --force_replace & --exclude_series_descs')
+    parser.add_argument('-D', '--DB_delete', action='store_true', default=False,
+                            help='Delete sqlite3 DB tables of previously generated clean values ;'
+                                'do NOT use if this DICOM batch is to maintain consistency with previously cleaned study values, etc.')
+    parser.add_argument('-o', '--org_root', type=str, default='5.555.5', help='Your organizations DICOM org root')
+    parser.add_argument('-l', '--log_file', type=str, default=None,
+                        help='Name of file to log messages to. Defaults to console')
+    parser.add_argument('-r', '--rename', action='store_true', default=False, help='Rename anonymized files to the new'
+                                                                                   'SOP Instance UID')
+    parser.add_argument('-p', '--profile', type=str, default='basic', choices=['basic', 'clean'],
+                        help='Application Level Confidentiality Profile from DICOM 3.15 Annex E. Supported'
+                             ' optons are "basic" and "clean". "basic" means to adhere to the Basic '
+                             '"Application Level". Confidentiality Profile. "clean" means adhere to the profile with '
+                             'the "Clean Descriptors Option". Defaults to "basic". If specifying "clean" you must also '
+                             'specify the "white_list" option.')
+    parser.add_argument('-k', '--keep_overlay', action='store_true', default=False,
+                        help='Keep overlay data. Please note this will override the Basic Application Level '
+                             'Confidentiality Profile which does not allow for overlay data')
+    parser.add_argument('-t', '--keep_private_tags', action='store_true', default=True,
+                        help='Keep private tags. Please note this will override the Basic Application Level '
+                             'Confidentiality Profile which does not allow private tags.')
+    parser.add_argument('-c', '--keep_csa_headers', action='store_true', default=False,
+                        help='Keep Siemens CSA Headers. Please note this will override the Basic Application Level '
+                             'Confidentiality Profile which does not allow private tags.')
+    parser.add_argument('-s', '--spec_file', type=str, default=os.path.join(os.path.dirname(__file__), 'spec_files',
+                                                                            'annexe_ext.dat'),
+                        help='Specification file that describes the anonymization strategy.')
+    parser.add_argument('-e', '--relative_dates', type=str, nargs=2, action='append', default=None,
+                        help='Dicom tags for date fields that should be made relative, rather than replaced.')
+    args = parser.parse_args()
+    if args.relative_dates is not None:
+        args.relative_dates = [tuple([int(item[0], 16), int(item[1], 16)]) for item in args.relative_dates]
+    i_dir = args.ident_dir
+    c_dir = args.clean_dir
+    del args.ident_dir
+    del args.clean_dir
+    da = DicomAnon(**vars(args))
+    da.run(i_dir, c_dir)

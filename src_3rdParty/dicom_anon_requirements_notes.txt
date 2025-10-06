@@ -1,0 +1,21 @@
+# This file collects all required third-party applications that are needed
+# to run this project. Later you can install all these apps in a row
+# using pip. Example::
+#
+#     pip install -U -r requirements.txt
+
+# WAS: dicom
+
+# r3m0 NOTE 7 March 2018:
+###########
+# This code is using an older version of pydicom, which is no longer
+# maintained as of Jan 2017.  You can access the new pydicom features and API
+# by installing `pydicom` from PyPI.
+# See 'Transitioning to pydicom 1.x' section at pydicom.readthedocs.org
+# for more information.
+###########
+# UPDATE: See the Transition Guide at
+# https://pydicom.github.io/pydicom/stable/transition_to_pydicom1.html.
+###########
+
+pydicom
