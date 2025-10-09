@@ -10,10 +10,39 @@ Please note that this is a _**reference snapshot**_ of Locutus, as from an inter
 
 While we would very much like to offer a ready-to-play turnkey solution, there are many internal infrastructure dependencies that will currently require customization to integrate within your own infrastructure.  For example, an internal "TRiG Secrets Manager" package that was developed for secure access to [Vault](https://www.hashicorp.com/en/products/vault)-based TRiG unified secrets is still referenced by, though not included, in the Locutus code for this reference release.   Within such secrets lie the configuration and connection information for our Locutus databases (within an instance of [Postgres](https://www.postgresql.org)) and our Research PACS (an instance of [Orthanc](https://www.orthanc-server.com)).
 
-Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to: williamsrms@chop.edu
+Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to: 🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING)
 
 ## LICENSE INFO
-🚧 COMING SOON 🚧
+🚧 UNDER CONSTRUCTION 🚧
+
+This project is released under a Non-Commercial Research License. For commercial use, please contact 🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING) for licensing terms.
+
+Non-Commercial Research License
+Copyright ©2025 The Children's Hospital of Philadelphia.
+
+Permission is hereby granted, free of charge, to any person or organization to use, copy, modify, and distribute this software and associated documentation files (the “Software”), for academic, research, or educational purposes only, subject to the following conditions:
+
+1. Attribution
+Appropriate credit must be given to the authors in any use, publication, or derivative work of the Software.
+
+2. Non-Commercial Use Only
+The Software may not be used, in whole or in part, for commercial purposes, including but not limited to:
+use in a product for sale,
+use in a for-profit company’s operations,
+use in services provided to customers for a fee.
+
+3. Commercial Licensing
+For commercial use, a separate license must be obtained from the copyright holder. Please contact:
+🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING)
+
+4. Warranty Disclaimer
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 
 ## Translate Phase
