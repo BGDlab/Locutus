@@ -13,7 +13,6 @@ While we would very much like to offer a ready-to-play turnkey solution, there a
 Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to: 🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING)
 
 ## LICENSE INFO
-🚧 UNDER CONSTRUCTION 🚧
 
 This project is released under a Non-Commercial Research License. For commercial use, please contact 🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING) for licensing terms.
 
