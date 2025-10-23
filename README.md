@@ -79,9 +79,11 @@ Further excerpts from Children's Hospital of Philadelphia Research Institute int
 
 <IMG SRC="./docs/images/Locutus_waterfall_wLogo.png" WIDTH="700" HEIGHT="400" />
 
-From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automated processing workflow management system for modules such as the following (as included in this reference repo):
+From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automated processing workflow management system for modules and commands such as the following (as included in this reference repo):
 
-    * OnPrem DICOM Objects
+    * OnPrem DICOM De-ID module
+    * DICOM Summarizer command
+
 
 This `README.md` will serve as a high-level overview and introduction into the implementation, configuration and usage details of Locutus, linking to the respective modules for further detail where applicable.  The following sections are currently available in this document:
 
@@ -92,18 +94,18 @@ This `README.md` will serve as a high-level overview and introduction into the i
     * [Current Manifest-Driven Approach](#current_manifest_driven_approach)
     * [General Locutus Approach](#general_locutus_approach)
     * [Approach summarized for each Locutus Module](#approach_summarized_for_each_locutus_module)
-        * [OnPrem DICOM Objects module](#highlevel_onprem_dicoms)
+        * [OnPrem DICOM De-ID module](#highlevel_onprem_dicoms)
         * [TODO: add DICOM Summarizer command](#highlevel_dicom_summarizer)
     * [Future Considerations to Approach](#highlevel_future)
 * [DBs, Vault, Configurations & Manifest Formats](#configs)
     * [General Locutus configuration](#cfg_locutus)
-    * [OnPrem DICOM objects module configuration](#cfg_onprem_dicoms)
-        * [OnPrem DICOM objects module manifest](#cfg_onprem_dicoms_manifest)
+    * [OnPrem DICOM De-ID module configuration](#cfg_onprem_dicoms)
+        * [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
     * [TODO: add DICOM Summarizer command configuration](#cfg_dicom_summarizer)
         * [TODO: DICOM add Summarizer command manifest](#cfg_dicom_summarizer_manifest)
 * [Deployment](#deployment)
     * [Jenkins-based Deployment](#deployment_jenkins)
-        * [Locutus-related jobs in EIG's Jenkins](#deployment_jenkins_eig)
+        * [Locutus-related jobs in TRiG's Jenkins](#deployment_jenkins_trig)
         * [locutus-sans-aperio-deploy job](#deployment_jenkins_sans_aperio)
         * [locutus-aperio-deploy job](#deployment_jenkins_aperio)
         * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
@@ -118,7 +120,7 @@ This `README.md` will serve as a high-level overview and introduction into the i
 High Level Program / Module | Data Type | Sources of Metadata | Functionality | Approach Details | Configuration & Manifest Info |
 ----- | ------- | ------- |  ------- | ------- | ------- |
 **General Locutus**|  _"any"_ | _"any"_ | _"any"_ | [General Locutus approach](#highlevel_locutus) | [General Locutus config](#cfg_locutus) |
-**OnPrem DICOM objects** (Radiology Imaging) |  DICOM Formatted MRIs | Manifest, and accession information from Clinical Radiology (DICOM Metadata) | for each accession # in the manifest: <br/> \* download DICOM MRIs from TRiG's PACS (Orthanc), <br/> \* de-identify DICOM on prem, <br/> \* use metadata from manifest & DICOM to define bucket key, and <br/> \* deliver to target |[OnPrem DICOM objects approach](#highlevel_onprem_dicoms)| [OnPrem DICOM config & manifest](#cfg_onprem_dicoms) |
+**OnPrem DICOM De-ID** (Radiology Imaging) |  DICOM Formatted objects (MRIs, X-Rays, CT scans, etc.) | Manifest, and accession information from Clinical Radiology (DICOM Metadata) | for each accession # in the manifest: <br/> \* download DICOM objects from our Research PACS (Orthanc), <br/> \* de-identify DICOM on prem, <br/> \* use metadata from manifest & DICOM to define bucket key, and <br/> \* deliver to target |[OnPrem DICOM De-ID approach](#highlevel_onprem_dicoms)| [OnPrem DICOM config & manifest](#cfg_onprem_dicoms) |
 
 
 
@@ -133,7 +135,7 @@ where applicable, as follows:
 * [Current Manifest-Driven Approach](#current_manifest_driven_approach)
 * [General Locutus Approach](#general_locutus_approach)
 * [Approach summarized for each Locutus Module](#approach_summarized_for_each_locutus_module)
-    * [OnPrem DICOM Objects module](#highlevel_onprem_dicoms)
+    * [OnPrem DICOM De-ID module](#highlevel_onprem_dicoms)
     * [TODO: add DICOM Summarizer command](#highlevel_dicom_summarizer)
 * [Future Considerations to Approach](#highlevel_future)
 
@@ -141,9 +143,9 @@ where applicable, as follows:
 <A NAME="historical_change_driven_approach"></A>
 ### Historical Change-Driven Approach
 
-Locutus development began in 2018 with an MRI-focused image DICOM processing module
-which was to automatically process any new MRIs appearing in our TRiG PACS
-server, an instance of Orthanc.  This entailed essentially launching Locutus as a service
+Locutus development began in 2018 with an initially MRI-focused, but DICOM generalized, de-identification module
+which was to automatically process any new MRIs appearing in our Research PACS,
+an instance of Orthanc.  This entailed essentially launching Locutus as a service
 through Jenkins, with a built-in polling mechanism utilizing
 the following configuration keys:
 
@@ -156,13 +158,15 @@ the following configuration keys:
 When using Jenkins to launch Locutus into the above
 continuous mode, injecting a Jenkins environment variable `XTRA_DOCKER_RUN_FLAGS`
 that includes `-d` will detach the Locutus docker container as
-a background daemon, allowing the Jenkins job to immediatey terminate.
+a background daemon, allowing the Jenkins job to immediately terminate.
 However, omitting this flag and keeping the job running in the Jenkins
 foreground allows the Jenkins job logging to be enjoyed "for free."
 For further information on `XTRA_DOCKER_RUN_FLAGS`
 and TRiG's corresponding `AAA-Jenkins-Setup` job's artifact script
 (`general_infra/deploy_etl.sh`),
-see [Jenkins-based Deployment](#jenkins_deployment).
+see [Jenkins-based Deployment](#deployment_jenkins).
+
+r3m0 TODO: highlight REFERENCE to the Jenkins artifacts!
 
 Although the current approach is now primarily Manifest-Driven
 (as described in [the next section](#current_manifest_driven_approach)),
@@ -187,15 +191,15 @@ as well as somehow try to determine the "Pre or Post" surgery status for each
 "Accession Num", the decision was made to instead utilize a
 Manifest-Driven approach.
 
-Each of the  Locutus modules now
+Each of the Locutus modules now
 currently expect an input manifest that specifies the particular
-data items to process (whether Aperio slides, DICOM objects, or respective reports)
+data items to process and De-ID (whether Aperio slides, DICOM objects, or respective reports)
 along with any desired metadata which might be used during the processing
 (e.g., in defining the target bucket key name).
 
 Samples of expected manifest formats for each Locutus module may be found at:
 
-* [OnPrem DICOM Objects module manifest](#cfg_onprem_dicoms_manifest)
+* [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
 
 With this Manifest-Driven approach, Locutus now generally utilizes
 a configuration setting of `locutus_run_mode="single"` since "continuous" polling
@@ -272,12 +276,12 @@ input manifest.
 
 Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: Download Locally | Phase04: Deidentify | Phase05: Upload to Target |
 ----- | ------- | ------- | ------- | ------- | ------- |
-OnPrem DICOM Objects:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Orthanc PACS | deidentify locally using [`dicom_anon.py`](./dicom_anon.py) | upload to deidentified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip` |
+OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | deidentify locally using [`dicom_anon.py`](./dicom_anon.py) | upload to deidentified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip` |
 
 
 
 <A NAME="highlevel_onprem_dicoms"></A>
-#### OnPrem DICOM Objects module, additional approach details
+#### OnPrem DICOM De-ID module, additional approach details
 
 
 
@@ -290,7 +294,7 @@ OnPrem DICOM Objects:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem
 <A NAME="highlevel_future"></A>
 ### Future Considerations to Address in Approach
 
-##### Migrating code from the modules into Locutus
+##### Refactoring code from the modules into Locutus core
 
 As additional modules become available for processing,
 alternative approaches might be considered in registering them with
@@ -307,6 +311,9 @@ such that Locutus itself takes a more active role in the actual
 details of such processing.
 To be determined, however, is whether or not the various `Process()` methods of these
 modules can actually be made consistent enough for Locutus to do so.
+Ideally, each module might even specify its maximum number of phases,
+along with each phase processing method,
+rather than be limited to the current default maximum phase of 5.
 
 Likewise, as more modules standardize upon and utilize a shared infrastructure
 (e.g., eventually a `<module>_MANIFEST_STATUS` table for each module,
@@ -323,11 +330,25 @@ and there is certainly much overlapping redundant code that could be consolidate
 ##### Enhancing the logging in Locutus
 
 Eventually integrate with tools such as Kabana for Elastic Search logging,
-but for now we primarily just take advatnage of the "free logging" available
+but for now we primarily just take advantage of the "free logging" available
 from Jenkins itself when deploying the job as a foreground job
 (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by
 `general_infro/deploy_etl.sh`)
 
+##### Going manifest-free (at least, manifest-once, after a 1-time manifest load)
+
+Locutus currently expects a manifest for almost all of its processing.
+The management of such batch manifests is left to the operators.
+When dealing with multiple manifest variations throughout the lifecycle of a batch
+(e.g., when filtering accessions on a status needing re-processing, etc.),
+such manual manifest manipulations can become not only cumbersome, but potentially error-prone.
+
+Ideally, a future Locutus enhancement shall include options to load a project manifest into a workspace one time (via, for example, a `load-manifest` command), and to thereafter process the project "manifest-free", either in its entirety, or by way of a configurable filter (e.g., only those currently in a non-PROCESSED state, etc.).
+
+It may also be worth noting here that our Jenkins instance is used to deploy not only DICOM De-ID jobs on an as needed basis, but also DICOM Summarizer jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
+each Jenkins job will need the latest manifest manually re-attached.  With many such regularly scheduled Summarizers automated through Jenkins, this can likewise be unnecessarily cumbersome and potentially error-prone.
+
+Such a "manifest-once" enhancement, though still manifest-driven, would significantly streamline the entire processing lifecycle for a batch, from De-ID through to the Summarizer.
 
 <A NAME="configs"></A>
 ## DBs, Vault, Configurations & Manifest Formats
@@ -336,8 +357,8 @@ The Vault-based database credentials and application configuration information, 
 where applicable, are described below for each of the following Locutus modules:
 
 * [General Locutus configuration](#cfg_locutus)
-* [OnPrem DICOM Objects module configuration](#cfg_onprem_dicoms)
-    * [OnPrem DICOM Objects module manifest](#cfg_onprem_dicoms_manifest)
+* [OnPrem DICOM De-ID module configuration](#cfg_onprem_dicoms)
+    * [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
 
 
 NOTE: The primary Locutus configuration shall be supplied as `./config.yaml` (as originally stored in Vault),
@@ -350,7 +371,7 @@ thereby negating the need for replication of such configs.
 
 ###### Vault-based Database credentials for the Locutus DB
 
-`trig:/kv1/databases/locutus`
+`namespace:/rootpath/databases/locutus`
 
 ```
 Keys
@@ -363,7 +384,7 @@ user
 
 ###### Vault-based App Config for Locutus
 
-`trig:/kv1/locutus`
+`namespace:/rootpath/locutus`
 
 ```
 Keys
@@ -389,7 +410,7 @@ locutus_target_use_s3:     | False | if "True", use a destination bucket on CHOP
 locutus_target_s3_bucket:     | chop-dbhi-eig-locutus | destination bucket for uploads into CHOP's Managed AWS s3 |
 locutus_target_use_gs:     | False | if "True", use a destination bucket on CHOP's Managed GCP GS |
 locutus_target_gs_bucket:     | dicom-alpha-bucket | destination bucket for uploads into CHOP's Managed GCP GS |
-locutus_DB_vault_path: | trig:/kv1/databases/locutus | Vault path to Locutus DB credentials |
+locutus_DB_vault_path: | namespace:/rootpath/databases/locutus | Vault path to Locutus DB credentials |
 locutus_DB_use_dev_suffix: | False | enable with "True" to use the below `locutus_DB_dev_suffix`  |
 locutus_DB_dev_suffix: | | use "_dev" when wanting to use the `locutus_dev` DB rather than its production DB from the above `locutus_DB_vault_path`redentials |
 locutus_DB_drop_tables: | False | use "True" only if wanting to drop the DB tables |
@@ -401,7 +422,6 @@ locutus_test: | False | use "True" to ensure that no DB data actually changed or
 locutus_force_success: | False | use "True" to avoid non-0 returns for any errors not actually fatal.  For example, enable for Jenkins-based deployment with manifest-skimming sub-batch processing to work around Samba-Docker issues inherent to CHOP's Aperio slide file systems, or with occasional network connection errors,  to help ensure that processing continues even if unsuccessful on any particular objects. |
 locutus_debug_keep_interim_files: | False | use "True" to *not* delete any interim files created during processing;<BR/>default is to delete such temporary files once subsequent processing Phases are completed |
 locutus_allow_processing_of_duplicates: | False | use "True" when, for example, setting up large tests of the same accession |
-locutus_dicom_remove_text_from_input_accessions: | False | use "True" when, for example, wanting to automatically remove text such as "VIRT" from accessions such as "VIRT12345" since Locutus currently expects accession_nums to be numeric |
 locutus_disable_phase_sweep: | False | use "True" when processing multiple jobs concurrently, to *not* sweep for any objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False, to sweep for any objects not yet completely processed (through Phase 5) once the manifest-driven Phases 1-3 are completed, but this can cause unintended job contention side-effects with concurrent deployments (Currently only supported by some modules) |
 locutus_expand_phase_sweep_beyond_manifest: | False | use "True" when wanting to processing *any* objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False to limit phase sweeps (when not otherwise disabled) to any objects not yet completely processed (through Phase 5) that are listed within the current input manifest (Currently only supported by the DICOM modules) |
 locutus_workspaces_enable: | False | use "True" when wanting to decouple a project's DB tables from the standard set of Locutus tables, allowing any multi-project accessions to have their own project-specific attributes. |
@@ -417,11 +437,11 @@ Jenkins' LOCUTUS_DOCKERHOST_IMAGE_TAG: | "" | informational info for CFG_OUT, of
 
 
 <A NAME="cfg_onprem_dicoms"></A>
-### OnPrem DICOM Objects module: DB, Vault, Configs, and Manifests
+### OnPrem DICOM De-ID module: DB, Vault, Configs, and Manifests
 
 ###### Vault-based App Config for for the upstream source OnPrem DICOM Staging
 
-`trig:/kv1/trig-dicom-staging`
+`namespace:/rootpath/trig-dicom-staging`
 
 ```
 Keys
@@ -433,7 +453,7 @@ production
 
 ###### Vault-based Database credentials for the upstream source OnPrem DICOM Staging DB
 
-`trig:/kv1/databases/trig_dicom_staging`
+`namespace:/rootpath/databases/trig_dicom_staging`
 
 ```
 Keys
@@ -451,7 +471,7 @@ configuration key | sample default value | description |
 ---- | ---- | ---- |
 process_onprem_dicom_images: | False | use "True" for Locutus to process this module;<BR/>may be overriden by environment variable: `process_onprem_dicom_images` |
 locutus_onprem_dicom_input_manifest_csv: | onprem_dicom_images_manifest.csv | name of the input manifest file expected to exist in the deployment job's workspace directory;<BR/>may be overriden by environment variable: `onprem_dicom_images_manifest` |
-onprem_dicom_stage_config_vault_path:     | trig:/kv1/trig-dicom-staging/production | Vault path to the OnPrem DICOM Staging configuration |
+onprem_dicom_stage_config_vault_path:     | namespace:/rootpath/trig-dicom-staging/production | Vault path to the OnPrem DICOM Staging configuration |
 locutus_onprem_dicom_zip_dir: | /data/locutus_production/onprem-dicom/phase03_orthanc_ids | path on deployment host for interim files|
 locutus_onprem_dicom_deidentified_dir: | /data/locutus_production/onprem-dicom/phase04_dicom_deids | path on deployment host for interim files |
 locutus_onprem_dicom_bucket_path_top_level: | .TopLevel | optional top-level path prefix key for target buckets |
@@ -460,7 +480,7 @@ locutus_debug_onprem_dicom_predelete_accession_status: | False | use "True" to f
 locutus_debug_onprem_dicom_preretire_accession_status: | False | use "True" to first "retire" (set accession_num to negative) and then process any manifest-driven input which may have already completed processing (allowing for updated re-processing with the current code base or config) |
 locutus_debug_onprem_dicom_preretire_accession_status_only_changed: | False | use "True" to first "retire" and then process any manifest-driven input which may have already completed processing, but only for those accessions whose manifest attributes have changed (much more efficient than the full "preretire" if only wanting to reprocess due to changed attributes rather than code or config) |
 locutus_debug_onprem_dicom_allow_continued_processing_if_only_cfgs_changed: | False | use "True" to continue processing a partially processed accession for which the previously processed internal configs have since changed |
-locutus_onprem_dicom_manual_deid_QC_orthanc_config_vault_path:     | trig:/kv1/locutus/manual_deid_qc_orthanc/production | Vault path to condensed config for the DeID QC Orthanc instance |
+locutus_onprem_dicom_manual_deid_QC_orthanc_config_vault_path:     | namespace:/rootpath/locutus/manual_deid_qc_orthanc/production | Vault path to condensed config for the DeID QC Orthanc instance |
 locutus_onprem_dicom_deid_pause4manual_QC_disable: | True | use "False" to enable a pause for manual QC step |
 locutus_onprem_dicom_use_manifest_QC_status: | False | use "True" to indicate reprocessing or pass of the manual QC step (see sample manifest below for the additional DEID_QC_STATUS column possibilities) |
 locutus_onprem_dicom_use_manifest_QC_status_if_fail_remove_study_from_deidqc: | False | use "True" to remove study from the manual DeID QC Orthanc |
@@ -517,10 +537,9 @@ C333221 | Radiology | 	1234 | spine |	1235123 | REPROCESS: update da cfgs  | |
 ## Deploying Locutus
 
 
-The deployment of Locutus is discussed in the following sub-sections:
+Aspects of deployment via Locutus is discussed briefly in the following sub-sections:
 
 * [Jenkins-based Deployment](#deployment_jenkins)
-    * [Locutus-related jobs in EIG's Jenkins](#deployment_jenkins_eig)
     * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 * [Local Deployment](#deployment_local)
 
@@ -533,12 +552,12 @@ The deployment of Locutus is discussed in the following sub-sections:
 When using Jenkins to launch Locutus into the above
 continuous mode, injecting a Jenkins environment variable `XTRA_DOCKER_RUN_FLAGS`
 that includes `-d` will detach the Locutus docker container as
-a background daemon, allowing the Jenkins job to immediatey terminate.
+a background daemon, allowing the Jenkins job to immediately terminate.
 However, omitting this flag and keeping the job running in the Jenkins
 foreground allows the Jenkins job logging to be enjoyed "for free."
 For further information on `XTRA_DOCKER_RUN_FLAGS`
 and the `AAA-Jenkins-Setup` job's artifact script, `general_infra/deploy_etl.sh`,
-which processes them, see [Jenkins-based Deployment](#jenkins_deployment).
+which processes them, see [Jenkins-based Deployment](#deployment_jenkins).
 
 
 
@@ -567,7 +586,7 @@ auto processing (e.g., Path Report DeID -> RTF).
 <A NAME="deployment_local"></A>
 ### Local Deployment
 
-
+r3m0 TODO: WIP: noting tools such as the deploy scripts and the Conductor?
 
 <A NAME="3rd_party"></A>
 ## 3rd Party Module Dependencies (in-house or not)
@@ -582,5 +601,5 @@ auto processing (e.g., Path Report DeID -> RTF).
 
 
 
-## We would like to wish you a most productive time with Locutus, to help find breakthroughs for kids of all ages everywhere.
+## We would like to wish you a most productive time with Locutus.
 
