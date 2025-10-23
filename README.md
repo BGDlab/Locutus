@@ -45,7 +45,7 @@ SOFTWARE.
 
 
 
-## Translate Phase
+## De-ID Transform Phase
 
 <IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
 
