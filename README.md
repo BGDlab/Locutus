@@ -44,7 +44,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-## Translate Phase
+## De-ID Transform Phase
 
 <IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
 
