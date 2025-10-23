@@ -47,7 +47,7 @@ SOFTWARE.
 
 ## Translate Phase
 
-<IMG SRC="./docs/images/phase04transform.png" WIDTH="400" HEIGHT="150" />
+<IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
 
 The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is:  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
 
