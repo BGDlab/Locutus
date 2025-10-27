@@ -3,7 +3,7 @@
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
 ## **REFERENCE ONLY**
-### last update: 23 October 2025
+_last update: 26 October 2025_
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
 
@@ -226,7 +226,7 @@ each Locutus module generally processes through the following sequence
 of Phases:
 
 
-Setup: Variable Initilization | Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (Deidentify) | Phase05: LOAD (Upload to Target)
+Setup: Variable Initilization | Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (Deidentify) | Phase05: LOAD (Upload to Target) |
 ----- | ------- | ------- | ------- | ------- | -------
 variable initialization: <br/> \* setup database tables <br/> \* confirm input manifest format <br/> \* confirm any input file shares | general prep work | prep work per manifest-line  | download or copy locally | deidentify | upload to target bucket, w/ the specific key defined per-module (starting with `<sdgID>/...`, where `<sdgID>` represents the particular Clinical Event ID)
 
@@ -275,7 +275,7 @@ input manifest.
 ### Approach summarized for each Locutus Module Processing Phase
 
 
-Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: Download Locally | Phase04: Deidentify | Phase05: Upload to Target |
+Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (Deidentify) | Phase05: LOAD (Upload to Target) |
 ----- | ------- | ------- | ------- | ------- | ------- |
 OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | deidentify locally using [`dicom_anon.py`](./dicom_anon.py) | upload to deidentified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip` |
 
@@ -334,7 +334,7 @@ Eventually integrate with tools such as Kabana for Elastic Search logging,
 but for now we primarily just take advantage of the "free logging" available
 from Jenkins itself when deploying the job as a foreground job
 (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by
-`general_infro/deploy_etl.sh`)
+`general_infra/deploy_etl.sh`)
 
 ##### Going manifest-free (at least, manifest-once, after a 1-time manifest load)
 
@@ -466,7 +466,7 @@ user
 ```
 
 
-###### OnPrem-Dicom-Objects module-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
+###### OnPrem-DICOM-DeID module-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
 
 configuration key | sample default value | description |
 ---- | ---- | ---- |
