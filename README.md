@@ -96,14 +96,14 @@ This `README.md` will serve as a high-level overview and introduction into the i
     * [General Locutus Approach](#general_locutus_approach)
     * [Approach summarized for each Locutus Module](#approach_summarized_for_each_locutus_module)
         * [OnPrem DICOM De-ID module](#highlevel_onprem_dicoms)
-        * [TODO: add DICOM Summarizer command](#highlevel_dicom_summarizer)
+        * [DICOM Summarizer command](#highlevel_dicom_summarizer)
     * [Future Considerations to Approach](#highlevel_future)
 * [DBs, Vault, Configurations & Manifest Formats](#configs)
     * [General Locutus configuration](#cfg_locutus)
     * [OnPrem DICOM De-ID module configuration](#cfg_onprem_dicoms)
         * [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
-    * [TODO: add DICOM Summarizer command configuration](#cfg_dicom_summarizer)
-        * [TODO: DICOM add Summarizer command manifest](#cfg_dicom_summarizer_manifest)
+    * [DICOM Summarizer command configuration](#cfg_dicom_summarizer)
+        * [DICOM Summarizer command manifest](#cfg_dicom_summarizer_manifest)
 * [Deployment](#deployment)
     * [Jenkins-based Deployment](#deployment_jenkins)
         * [Locutus-related jobs in TRiG's Jenkins](#deployment_jenkins_trig)
@@ -137,7 +137,7 @@ where applicable, as follows:
 * [General Locutus Approach](#general_locutus_approach)
 * [Approach summarized for each Locutus Module](#approach_summarized_for_each_locutus_module)
     * [OnPrem DICOM De-ID module](#highlevel_onprem_dicoms)
-    * [TODO: add DICOM Summarizer command](#highlevel_dicom_summarizer)
+    * [DICOM Summarizer command](#highlevel_dicom_summarizer)
 * [Future Considerations to Approach](#highlevel_future)
 
 
@@ -201,6 +201,7 @@ along with any desired metadata which might be used during the processing
 Samples of expected manifest formats for each Locutus module may be found at:
 
 * [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
+* [DICOM Summarizer command manifest](#cfg_dicom_summarizer_manifest)
 
 With this Manifest-Driven approach, Locutus now generally utilizes
 a configuration setting of `locutus_run_mode="single"` since "continuous" polling
@@ -289,7 +290,10 @@ OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_d
 
 <A NAME="highlevel_dicom_summarizer"></A>
 ### DICOM Summarizer command for DICOM modules, including the OnPrem DICOM modules
-===> TODO:  add high level overview of the Summarizer
+
+The DICOM Summarizer is to be a module-agnostic tool to view the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
+
+With the addition of the Preloader, a Summarizer sidecar, the manifest_status values can be updated for a batch (with a supplied suffix) in order ot more easily monitor the ongoing status of a DICOM De-ID batch.
 
 
 <A NAME="highlevel_future"></A>
@@ -359,7 +363,7 @@ where applicable, are described below for each of the following Locutus modules:
 
 * [General Locutus configuration](#cfg_locutus)
 * [OnPrem DICOM De-ID module configuration](#cfg_onprem_dicoms)
-    * [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
+* [DICOM Summarizer command configuration](#cfg_dicom_summarizer)
 
 
 NOTE: The primary Locutus configuration shall be supplied as `./config.yaml` (as originally stored in Vault),
@@ -531,6 +535,47 @@ C333221 | Radiology | 	1234 | spine |	1235112 | REPROCESS: update da cfgs  | |
 C333221 | Radiology | 	1234 | spine |	1235123 | REPROCESS: update da cfgs  | |
 
 
+<A NAME="cfg_dicom_summarizer"></A>
+### DICOM Summarizer command: DB, Vault, Configs, and Manifests
+
+The DICOM Summarizer command can be used to summarize the DICOM De-ID statuses within any Locutus workspace for any Locutus De-ID module so configured.
+
+
+
+###### DICOM-Summarizer command-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
+
+configuration key | sample default value | description |
+---- | ---- | ---- |
+process_dicom_summarize_stats: | False | use "True" for Locutus to run this command;<BR/>may be overriden by environment variable: `process_dicom_summarize_stats` |
+dicom_summarize_stats_manifest_csv: | dicom_summarize_stats_manifest.csv | name of the input manifest file expected to exist in the deployment job's workspace directory;<BR/>may be overriden by environment variable: `dicom_summarize_stats_manifest_csv` |
+dicom_summarize_dicom_stage_config_vault_path: | trig:/kv1/trig-dicom-staging/production | Vault path to the DICOM Staging configuration |
+dicom_summarize_stats_module: | 'OnPrem' | summarize for the specified DICOM De-ID module |
+dicom_summarize_stats_show_accessions:  | True | set to False to show only overall summarized output, rather than a detailed summary per accession |
+dicom_summarize_stats_redact_accessions: | False | set to True to redact accession_nums in summarized output, if showing accessions |
+dicom_summarize_stats_enable_db_updates: | False | set to True to enable Summarizer sidecar functionality that may update the database (normally read-only) |
+dicom_summarize_stats_preload_new_accessions_per_manifest: | False | set to True to run the Summarizer's status-aware Preloader sidecar, allowing updates according to the manifest_status for each accession prior to processing |
+dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: |  'summarizerPreLoaded' | custom suffix, such as 'batch123' to follow the initial preload status, e.g. `ZZZ-ONDECK-4-PROCESSING:batch1234` |
+locutus_debug_onprem_dicom_force_reprocess_accession_status: | False | set to True when using module=`OnPrem` for Preloader sidecar to include options such as `ZZZ-ONDECK-4-RE-PROCESSING:batch1234`, if already `PROCESSED` (otherwise, won't even Preload since nothing more to do) |
+
+
+<A NAME="cfg_dicom_summarizer_manifest"></A>
+
+###### Sample of expected manifest format for the <U>dicom_summarize_stats_manifest.csv</U>, with dicom_summarize_stats_module=`OnPrem`:
+
+SUBJECT_ID | imaging_type | age_at_imaging_(days) | anatomical_position | ACCESSION_NUM | DEID_QC_STATUS | locutus_manifest_ver:locutus.onprem_dicom_deid_qc.2021march15 |
+--- | --- | --- | --- | --- | --- | --- |
+C123456 | Radiology | 	1122 | brain |	1234640 | | |
+C123456 | Radiology | 	1223 | brain |	1234669 | | |
+C123456 | Radiology | 	1345 | brain |	1234663 | | |
+C123456 | Radiology | 	1456 | brain |	1234670 | | |
+C123456 | Radiology | 	1457 | brain |	1234676 | | |
+C123456 | Radiology | 	1567 | brain |	1234697 | | |
+C333221 | Radiology | 	905 | spine |	1234661 | | |
+C333221 | Radiology | 	910 | spine |	1234680 | | |
+C333221 | Radiology | 	1111 | spine |	1235008 | | |
+C333221 | Radiology | 	1122 | spine |	1235015 | | |
+C333221 | Radiology | 	1234 | spine |	1235112 | | |
+C333221 | Radiology | 	1234 | spine |	1235123 | | |
 
 
 
