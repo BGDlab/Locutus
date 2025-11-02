@@ -1,15 +1,58 @@
+<A NAME="top"></A>
 # Locutus
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-## **REFERENCE ONLY**
-_last update: 26 October 2025_
+_last update: 02 November 2025_
+
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
 
+<IMG SRC="./docs/images/Locutus_waterfall_wLogo.png" WIDTH="700" HEIGHT="400" />
+
+From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automated processing workflow management system for modules and commands such as the following (as included in this reference repo):
+
+    * OnPrem DICOM De-ID module
+    * DICOM Summarizer command
+
+
+
+## De-ID Transform Phase
+
+<IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
+
+The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
+
+The following Python code snippet shows its integration:
+
+>                dicom_anon_Popen_args = [
+>                    'python3',
+>                    './src_3rdParty/dicom_anon.py',
+>                    '--spec_file',
+>                    DEFAULT_DICOM_ANON_SPEC_FILE,
+>                    '--modalities',
+>                    DEFAULT_DICOM_ANON_MODALITIES_STR,
+>                    '--force_replace',
+>                    curr_replacement_patient_info,  # for 'R's in dicom_anon_spec_file
+>                    '--exclude_series_descs',
+>                    DICOM_SERIES_DESCS_TO_EXCLUDE,
+>                    '{0}'.format(curr_uuid_id_images_path),
+>                    '{0}'.format(deidentified_dirname)
+>                ]
+>
+>                proc = Popen(dicom_anon_Popen_args, stdout=PIPE, stderr=PIPE)
+>                (stdoutdata, stderrdata) = proc.communicate()
+
+
+
+## **REFERENCE ONLY**
+
 Please note that this is a _**reference snapshot**_ of Locutus, as from an internal repo at the Children's Hospital of Philadelphia Research Institute.  We include for your reference a sample Locutus module (**OnPrem DICOM De-ID**, as used to de-identify clinical radiology for BGD's research), and a sample Locutus command (**the Summarizer**, to assist in preloading and monitoring a batch of accessions for de-identification).
 
-While we would very much like to offer a ready-to-play turnkey solution, there are many internal infrastructure dependencies that will currently require customization to integrate within your own infrastructure.  For example, an internal "TRiG Secrets Manager" package that was developed for secure access to [Vault](https://www.hashicorp.com/en/products/vault)-based TRiG unified secrets is still referenced by, though not included, in the Locutus code for this reference release.   Within such secrets lie the configurations and connection information for various Locutus components, including databases (within an instance of [Postgres](https://www.postgresql.org)) and our Research PACS (an instance of [Orthanc](https://www.orthanc-server.com)).
+While we would very much like to offer a ready-to-play turnkey solution, there are many internal infrastructure dependencies that will currently require customization to integrate within your own infrastructure.
+
+For example, an internal "TRiG Secrets Manager" package is still referenced by, though not included, in the Locutus code for this reference release. This package provides secure access to [Vault](https://www.hashicorp.com/en/products/vault)-based TRiG unified secrets that contain configurations and connection information for various Locutus components, including databases (within an instance of [Postgres](https://www.postgresql.org)) and our Research PACS (an instance of [Orthanc](https://www.orthanc-server.com)).
+Please see the [Deploying Locutus](#deployment) section for further details.
 
 Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to: 🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING)
 
@@ -45,49 +88,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+<BR/>
 
-## De-ID Transform Phase
+----------------------------------------------------------------
 
-<IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
-
-The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is:  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
-
-The following Python code snippet shows its integration:
-
->                dicom_anon_Popen_args = [
->                    'python3',
->                    './src_3rdParty/dicom_anon.py',
->                    '--spec_file',
->                    DEFAULT_DICOM_ANON_SPEC_FILE,
->                    '--modalities',
->                    DEFAULT_DICOM_ANON_MODALITIES_STR,
->                    '--force_replace',
->                    curr_replacement_patient_info,  # for any 'R' specs (e.g., PatientsName & PatientID) in the dicom_anon_spec_file
->                    '--exclude_series_descs',
->                    DICOM_SERIES_DESCS_TO_EXCLUDE,
->                    '{0}'.format(curr_uuid_id_images_path),
->                    '{0}'.format(deidentified_dirname)
->                ]
->
->                proc = Popen(dicom_anon_Popen_args, stdout=PIPE, stderr=PIPE)
->                (stdoutdata, stderrdata) = proc.communicate()
+# Detailed Locutus Documentation
 
 
-Further excerpts from Children's Hospital of Philadelphia Research Institute internal repo for Locutus follow:
+The rest of this  `README.md` will serve as a high-level overview and introduction into the implementation, configuration and usage details of Locutus.
 
-<A NAME="top"></A>
-# Locutus
-
-<IMG SRC="./docs/images/Locutus_waterfall_wLogo.png" WIDTH="700" HEIGHT="400" />
-
-From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automated processing workflow management system for modules and commands such as the following (as included in this reference repo):
-
-    * OnPrem DICOM De-ID module
-    * DICOM Summarizer command
-
-
-This `README.md` will serve as a high-level overview and introduction into the implementation, configuration and usage details of Locutus, linking to the respective modules for further detail where applicable.  The following sections are currently available in this document:
-
+The following sections from the Children's Hospital of Philadelphia Research Institute's internal repo are provided here for your Locutus reference, linking to excerpts from the respective modules for further detail where applicable.
 
 * [Overview of Locutus Modules](#overview-of-locutus-modules)
 * [High-Level Approach & Flow](#high_level_approach_and_flow)
@@ -106,9 +116,6 @@ This `README.md` will serve as a high-level overview and introduction into the i
         * [DICOM Summarizer command manifest](#cfg_dicom_summarizer_manifest)
 * [Deployment](#deployment)
     * [Jenkins-based Deployment](#deployment_jenkins)
-        * [Locutus-related jobs in TRiG's Jenkins](#deployment_jenkins_trig)
-        * [locutus-sans-aperio-deploy job](#deployment_jenkins_sans_aperio)
-        * [locutus-aperio-deploy job](#deployment_jenkins_aperio)
         * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
     * [Local Deployment](#deployment_local")
 * [3rd Party Module Dependencies (in-house or not)](#3rd_party)
@@ -144,7 +151,7 @@ where applicable, as follows:
 <A NAME="historical_change_driven_approach"></A>
 ### Historical Change-Driven Approach
 
-Locutus development began in 2018 with an initially MRI-focused, but DICOM generalized, de-identification module
+Locutus development began in 2018 with an initially MRI-focused, but DICOM-generalized, de-identification module
 which was to automatically process any new MRIs appearing in our Research PACS,
 an instance of Orthanc.  This entailed essentially launching Locutus as a service
 through Jenkins, with a built-in polling mechanism utilizing
@@ -220,65 +227,54 @@ for further info....
 <A NAME="general_locutus_approach"></A>
 ### General Locutus Approach with Processing Phases
 
+Locutus modules are designed to process data through a series of phases. While each "Phase" is somewhat loosely defined and may vary in
+implementation across the modules, each Locutus module generally processes through the following sequence:
 
-While each "Phase" is somewhat loosely defined and may vary widely in
-implementation across the modules,
-each Locutus module generally processes through the following sequence
-of Phases:
-
-
-Setup: Variable Initilization | Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (Deidentify) | Phase05: LOAD (Upload to Target) |
+Setup: Variable Initilization | Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (De-identify) | Phase05: LOAD (Upload to Target) |
 ----- | ------- | ------- | ------- | ------- | -------
-variable initialization: <br/> \* setup database tables <br/> \* confirm input manifest format <br/> \* confirm any input file shares | general prep work | prep work per manifest-line  | download or copy locally | deidentify | upload to target bucket, w/ the specific key defined per-module (starting with `<sdgID>/...`, where `<sdgID>` represents the particular Clinical Event ID)
+variable initialization: <br/> \* setup database tables <br/> \* confirm input manifest format <br/> \* confirm any input file shares | general prep work | prep work per manifest-line  | download or copy locally | de-identify | upload to target bucket, w/ the specific key defined per-module (starting with `<sdgID>/...`, where `<sdgID>` represents the particular Clinical Event ID)
 
 To minimize the necessary disk space needed throughout each module's
-processing, the Locutus modules will aim to process each source object/file
+processing, modules aim to process each source object/file
 entirely though the above Phases before proceeding to the next source object
-specified in the input manifest.  Early prototypes aimed to process download/copy
-all Phase03 source objects/files before proceeding on to Phase04 for deidentification, but
-disk space quickly became a limiting factor on any more than the smallest of
-change sets or manifests.
+specified in the input manifest.  While early prototypes aimed to process
+download/copy all Phase03 source object files before proceeding on to Phase04
+for de-identification, disk space quickly became a limiting factor.
 
-To further minimize the necessary disk space needed throughout each module's
-processing, interim files (those mid-stream processing outputs, other than the initial
-source objects/files or final destination targets) are typically deleted
-once they are no longer needed for processing.  For example, upon successfully
-completing Phase04's Deidentification process, the module shall remove the
-Phase03 local copy containing identifiable information
-(that is, if Deidentification does indeed create a brand new file,
-rather than happening "in place" on the existing identified file).  And upon
-successfully completing Phase05's Upload process to configured target, the module shall remove
-the corresponding locally deidentified file.
+Furthermore, interim files (those mid-stream processing outputs,
+other than the initial source objects/files or final destination targets)
+are typically deleted once they are no longer needed for processing.
+For example, upon successfully completing Phase04's De-identification process,
+the module shall remove the Phase03 local copy containing identifiable
+information (that is, if de-identification does indeed create a brand new
+file, rather than happening "in place" on the existing identified file).
+And upon successfully completing Phase05's Upload process to configured target,
+the module shall remove the corresponding locally de-identified file.
 
-Of course, sometimes issues are in encountered in processing the objects/files.
-When needing to access any of the interim files for further investigation,
+When issues are encountered in processing the objects/files,
 an overall Locutus configuration setting of
-`locutus_debug_keep_interim_files=True` may be defined,
-and each such local interim file will remain.  Please only use this setting with
-small input manifests, remaining mindful of the disk space.
+`locutus_debug_keep_interim_files=True` may be defined to retain
+these interim files.
 
-To easily resume processing of any objects/files which may have encountered any
-issues along the way (and were therefore not successfully progressed to a
-subsequent Phase), the Locutus modules are generally implemented to also look
-for any objects/files still in mid-processing at each and every Phase.
-That is, once all of the source objects/files defined in a module's input manifest have been
-processed, the module shall then look for any locally copied files from Phase03 and process them on
-through to completion if possible, then look for any locally deidentified files from Phase04
-and process them on through to completion if possible.
+Locutus modules are generally implemented to also look for any objects/files
+still in mid-processing in case of premature termination of the module
+by way of a "Phase Sweep" (if `locutus_disable_phase_sweep` is enabled). That
+is, once all of the source objects/files defined in a module's input manifest
+have been processed through as many phases as possible,
+the module shall then Phase Sweep to look for any locally copied files
+from Phase03 not yet de-identified and process them on through to completion if possible, then look for any locally de-identified files from Phase04 not yet uploaded, and process them on through the upload to completion, if possible.
 
-As such, once any issues around
+If `locutus_expand_phase_sweep_beyond_manifest` is also enabled,  once any issues around
 processing a particular input objects/file are resolved, the interim input file should be
-picked up at its respective Phase in processing, even if it is no longer listed in the
-input manifest.
-
+picked up by a Phase Sweep at its respective Phase in processing, even if it is no longer listed in the input manifest.
 
 <A NAME="approach_summarized_for_each_locutus_module"></A>
 ### Approach summarized for each Locutus Module Processing Phase
 
 
-Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (Deidentify) | Phase05: LOAD (Upload to Target) |
+Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (De-identify) | Phase05: LOAD (Upload to Target) |
 ----- | ------- | ------- | ------- | ------- | ------- |
-OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | deidentify locally using [`dicom_anon.py`](./dicom_anon.py) | upload to deidentified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip` |
+OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | de-identify locally using [`dicom_anon.py`](./dicom_anon.py) | upload to de-identified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip` |
 
 
 
@@ -291,9 +287,9 @@ OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_d
 <A NAME="highlevel_dicom_summarizer"></A>
 ### DICOM Summarizer command for DICOM modules, including the OnPrem DICOM modules
 
-The DICOM Summarizer is to be a module-agnostic tool to view the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
+The DICOM Summarizer is to be a module-agnostic command to view the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
 
-With the addition of the Preloader, a Summarizer sidecar, the manifest_status values can be updated for a batch (with a supplied suffix) in order ot more easily monitor the ongoing status of a DICOM De-ID batch.
+With the addition of the Preloader, a Summarizer sidecar, the manifest_status values can be updated for a batch (with a supplied suffix) in order to more easily monitor the ongoing status of a DICOM De-ID batch.
 
 
 <A NAME="highlevel_future"></A>
@@ -334,23 +330,16 @@ and there is certainly much overlapping redundant code that could be consolidate
 
 ##### Enhancing the logging in Locutus
 
-Eventually integrate with tools such as Kabana for Elastic Search logging,
-but for now we primarily just take advantage of the "free logging" available
-from Jenkins itself when deploying the job as a foreground job
-(i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by
+Eventually integrate with enhanced logging capability (such as logging levels) and/or tools, but for now we primarily just take advantage of the "free logging" available from Jenkins itself when deploying the job as a foreground job (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by
 `general_infra/deploy_etl.sh`)
 
 ##### Going manifest-free (at least, manifest-once, after a 1-time manifest load)
 
-Locutus currently expects a manifest for almost all of its processing.
-The management of such batch manifests is left to the operators.
-When dealing with multiple manifest variations throughout the lifecycle of a batch
-(e.g., when filtering accessions on a status needing re-processing, etc.),
-such manual manifest manipulations can become not only cumbersome, but potentially error-prone.
+Locutus currently expects a manifest for almost all of its processing. The management of such batch manifests is left to the operators. When dealing with multiple manifest variations throughout the lifecycle of a batch (e.g., when filtering accessions on a status needing re-processing, etc.), such manual manifest manipulations can become not only cumbersome, but potentially error-prone.
 
 Ideally, a future Locutus enhancement shall include options to load a project manifest into a workspace one time (via, for example, a `load-manifest` command), and to thereafter process the project "manifest-free", either in its entirety, or by way of a configurable filter (e.g., only those currently in a non-PROCESSED state, etc.).
 
-It may also be worth noting here that our Jenkins instance is used to deploy not only DICOM De-ID jobs on an as needed basis, but also DICOM Summarizer jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
+It may also be worth noting here that our Jenkins instance is used to deploy not only DICOM De-ID jobs on an as-needed basis, but also DICOM Summarizer jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
 each Jenkins job will need the latest manifest manually re-attached.  With many such regularly scheduled Summarizers automated through Jenkins, this can likewise be unnecessarily cumbersome and potentially error-prone.
 
 Such a "manifest-once" enhancement, though still manifest-driven, would significantly streamline the entire processing lifecycle for a batch, from De-ID through to the Summarizer.
@@ -510,7 +499,7 @@ C333221 | Radiology | 	1234 | spine |	1235112 | | |
 C333221 | Radiology | 	1234 | spine |	1235123 | | |
 
 
-Furthermore, should `locutus_onprem_dicom_use_manifest_QC_status=True`, 
+Furthermore, should `locutus_onprem_dicom_use_manifest_QC_status=True`,
 available options for the `DEID_QC_STATUS` include:
 * **PASS**:* = reprocess with the approved configurations and bypass the Manual DeiD QC instance, thereby ensuring that all resulting de-identified data is reproducible without any further manual intervention);
 * **PASS_FROM_DEIDQC**:* = pull directly from the Manual DeiD QC instance (e.g., ORTHANCDEIDQC), allowing for any manual alterations to the study while on ORTHANCDEIDQC, wherever such exceptions might be required/desired;
