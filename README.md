@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 02 November 2025_
+_last update: 03 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -174,7 +174,6 @@ and TRiG's corresponding `AAA-Jenkins-Setup` job's artifact script
 (`general_infra/deploy_etl.sh`),
 see [Jenkins-based Deployment](#deployment_jenkins).
 
-r3m0 TODO: highlight REFERENCE to the Jenkins artifacts!
 
 Although the current approach is now primarily Manifest-Driven
 (as described in [the next section](#current_manifest_driven_approach)),
@@ -610,18 +609,15 @@ With multiple Locutus configurations possible for multiple Locutus
 deployments (whether through Jenkins or otherwise), the possibilities
 are nearly limitless.
 
-This might require multiple Jenkins jobs
-(just as the Aperio has been split out into a separate one),
+This might require multiple Jenkins jobs,
 but can all still be done from the same Locutus code base.
-
-NOTE: may still include SOME entry-points and configs for such non-manifest
-auto processing (e.g., Path Report DeID -> RTF).
 
 
 <A NAME="deployment_local"></A>
 ### Local Deployment
 
-r3m0 TODO: WIP: noting tools such as the deploy scripts and the Conductor?
+FORTHCOMING
+
 
 <A NAME="3rd_party"></A>
 ## 3rd Party Module Dependencies (in-house or not)
@@ -636,5 +632,6 @@ r3m0 TODO: WIP: noting tools such as the deploy scripts and the Conductor?
 
 
 
-## We would like to wish you a most productive time with Locutus.
+
+### From the Brain-Gene Development Lab, the Translational Research Informatics Group, the Department of Biomedical Health Informatics, and all of the Children's Hospital of Philadelphia Research Institute, we would like to sincerely wish you a most productive time with Locutus, to help find breakthroughs for people everywhere.
 
