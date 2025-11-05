@@ -54,11 +54,12 @@ While we would very much like to offer a ready-to-play turnkey solution, there a
 For example, an internal "TRiG Secrets Manager" package is still referenced by, though not included, in the Locutus code for this reference release. This package provides secure access to [Vault](https://www.hashicorp.com/en/products/vault)-based TRiG unified secrets that contain configurations and connection information for various Locutus components, including databases (within an instance of [Postgres](https://www.postgresql.org)) and our Research PACS (an instance of [Orthanc](https://www.orthanc-server.com)).
 Please see the [Deploying Locutus](#deployment) section for further details.
 
-Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to: 🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING)
+Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to us, at:
+*  DL-locutus-support@chop.edu
 
 ## LICENSE INFO
 
-This project is released under a Non-Commercial Research License. For commercial use, please contact 🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING) for licensing terms.
+This project is released under a Non-Commercial Research License. For commercial use, please contact us at DL-locutus-support@chop.edu for licensing terms.
 
 Non-Commercial Research License
 Copyright ©2025 The Children's Hospital of Philadelphia.
@@ -76,7 +77,7 @@ use in services provided to customers for a fee.
 
 3. Commercial Licensing
 For commercial use, a separate license must be obtained from the copyright holder. Please contact:
-🚧 DL-locutus-support@chop.edu 🚧 (FORTHCOMING)
+    * DL-locutus-support@chop.edu
 
 4. Warranty Disclaimer
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -119,6 +120,7 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
     * [Jenkins-based Deployment](#deployment_jenkins)
         * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 * [3rd Party Module Dependencies (in-house or not)](#3rd_party)
+* [Contact Us](#contact)
 
 
 <A NAME="overview-of-locutus-modules"></A>
@@ -683,8 +685,12 @@ foreground allows the Jenkins job logging to be enjoyed "for free."
 
    * related local doc [the README for dicom-anon](./docs/README_dicom-anon.md)
 
+<A NAME="contact"></A>
+## Contact Us
 
+#### From the Brain-Gene Development Lab, the Translational Research Informatics Group, the Department of Biomedical Health Informatics, and all of the Children's Hospital of Philadelphia Research Institute, we would like to sincerely wish you a most productive time with Locutus.
 
+Again, should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, or just have some questions or feedback, please reach out to us, at: 
+* DL-locutus-support@chop.edu
 
-### From the Brain-Gene Development Lab, the Translational Research Informatics Group, the Department of Biomedical Health Informatics, and all of the Children's Hospital of Philadelphia Research Institute, we would like to sincerely wish you a most productive time with Locutus, to help find breakthroughs for people everywhere.
-
+Thank you!
