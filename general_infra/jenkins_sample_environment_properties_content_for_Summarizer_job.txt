@@ -1,0 +1,37 @@
+# EXAMPLE Environment Properties Content for a Jenkins DICOM Summarizer deployment,
+# with process_dicom_summarize_stats=true
+
+VAULT_NAMESPACE = <your Vault namespace here>
+VAULT_ADDR = <your Vault address here>
+jenkins_svcaccnt = <your Jenkins service account name here>
+#################################
+# whether for HARBOR or any other such Elastic Container Repository:
+HARBOR_REPO_NAME = <your repo name>
+VAULT_EIG_LOCATION = <your path in Vault>
+DISABLED_XTRA_DOCKER_RUN_FLAGS=-d
+# SPECIFIC to this locutus-onprem-dicom-deploy-concurrently job:
+CONCURRENT_CONTAINER_NAME_SUFFIX=_concurrently${BUILD_ID}
+##########################
+ONPREM_ISILON = <your local volume>
+##########################
+
+
+#
+# NOTE: the below names for the corresponding manifest files to each image/report type to process are also defined above
+# in the respective File Parameters, and are passed along as -e env-var parms for the app to open.... 
+#
+XTRA_DOCKER_RUN_FLAGS:
+#
+# as built up from each of the user configurable parameters within the respective Jenkins job.
+# NOTE: specific to DICOM Summarizer, as per the following hardcoded process_dicom_summarize_stats=true
+
+XTRA_DOCKER_RUN_FLAGS=--net=host -v /data:/data  \
+-v ${ONPREM_ISILON}:${ONPREM_ISILON} \
+-v ${WORKSPACE}/dicom_summarize_stats_manifest:/opt/app/dicom_summarize_stats_manifest.csv  \
+-e process_dicom_summarize_stats=true \
+-e dicom_summarize_stats_manifest_csv=dicom_summarize_stats_manifest.csv \
+-e VAULT_NAME_SPACE=${VAULT_NAME_SPACE}  \
+-e locutus_workspaces_enable=${locutus_workspaces_enable}  \
+-e locutus_workspace_name=${locutus_workspace_name}
+
+

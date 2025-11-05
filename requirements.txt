@@ -1,0 +1,63 @@
+# requirements from trig-dicom-stage
+httplib2
+requests>=2.18.4
+# WAS: hvac>=0.2,<0.3
+# Allow hvac to ripple through from eig_etl_image if available, or just get latest here:
+hvac
+PyYAML
+sqlalchemy
+
+# for psycopg2:
+#psycopg2==2.7.7
+# WARNING: NO LONGER working with the new eig_etl_imag
+# in spite of below comments prior...
+#
+# NOTE: any versions higher than v2.7.7 cause their own issues,`
+# and trying to run just the binary version alone locally ends up with other issues.
+# So, keeping BOTH the above and below binary loaded, at least locally
+# UPDATE: a pip3 uninstall of both, and THEN a pip3 install of just the below worked fine!
+# (but the Docker version seems to run just fine, thank you very much!)
+# THEN: psycopg2-binary               2.8.3
+# via:
+psycopg2-binary
+
+#########################################################################
+# for dicom-anon:
+pydicom==2.4.3
+# ^^^ NOTE: Joey recommends locking it in to v2.4.3 until we can upgrade dicom_anon to use the pydicom v3 approach
+###########
+# previously...
+# NOTE: pydicom was showing version as latest, namely 1.3:
+# pydicom                       1.3.0
+# TODO: consider also/instead eventually using: https://pypi.org/project/deid/
+# deid==0.1.34
+#########################################################################
+beautifulsoup4==4.6.0
+
+# NOTE: include any cloud provider interface packages here
+##########
+# FOR EXAMPLE, with AWS targets, may want to use:
+#####
+#boto3==1.4.4
+# ALSO, for chop AWS authentication through aws-auth-cli or chop_boto.py (and its function for awsDEV, etc.)
+# (cmd-line only, no need to add to Dockerfile):
+#boto
+#botocore
+#s3transfer
+##########
+# FOR EXAMPLE, with Google targets, may want to use:
+# for GCP's Google Storage:
+#google
+#google-cloud
+#google-cloud-storage
+#google-api-python-client
+
+# to support TRiG Vault interactions:
+#== internal TrigSecretsManager
+
+# for determining MIME type:
+python-magic
+# WARNING: since this is loaded by the Dockerfile,
+# BUT python-magic-bin is not found via the Docker build,
+# disable locally for now...
+#python-magic-bin

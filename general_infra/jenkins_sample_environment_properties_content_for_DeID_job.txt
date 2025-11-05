@@ -1,0 +1,51 @@
+# EXAMPLE Environment Properties Content for a Jenkins OnPrem DICOM De-ID deployment,
+# with process_onprem_dicom_images=true
+
+VAULT_NAMESPACE = <your Vault namespace here>
+VAULT_ADDR = <your Vault address here>
+jenkins_svcaccnt = <your Jenkins service account name here>
+#################################
+# whether for HARBOR or any other such Elastic Container Repository:
+HARBOR_REPO_NAME = <your repo name>
+VAULT_EIG_LOCATION = <your path in Vault>
+DISABLED_XTRA_DOCKER_RUN_FLAGS=-d
+# SPECIFIC to this locutus-onprem-dicom-deploy-concurrently job:
+CONCURRENT_CONTAINER_NAME_SUFFIX=_concurrently${BUILD_ID}
+##########################
+ONPREM_ISILON = <your local volume>
+##########################
+
+
+#
+# NOTE: the below names for the corresponding manifest files to each image/report type to process are also defined above
+# in the respective File Parameters, and are passed along as -e env-var parms for the app to open.... 
+#
+XTRA_DOCKER_RUN_FLAGS:
+#
+# as built up from each of the user configurable parameters within the respective Jenkins job.
+# NOTE: specific to OnPrem-De-ID, as per the following hardcoded process_onprem_dicom_images=true
+
+XTRA_DOCKER_RUN_FLAGS=--net=host -v /data:/data  \
+-v ${ONPREM_ISILON}:${ONPREM_ISILON} \
+-v ${WORKSPACE}/onprem_dicom_images_manifest:/opt/app/onprem_dicom_images_manifest.csv  \
+-e process_onprem_dicom_images=true  \
+-e onprem_dicom_images_manifest=onprem_dicom_images_manifest.csv  \
+-e locutus_dicom_run_mode_continue_to_manifest_convergence=${locutus_dicom_run_mode_continue_to_manifest_convergence} \
+-e locutus_disable_phase_sweep=${locutus_disable_phase_sweep}  \
+-e locutus_debug_onprem_dicom_predelete_accession_status=${locutus_debug_onprem_dicom_predelete_accession_status}  \
+-e locutus_debug_onprem_dicom_preretire_accession_status=${locutus_debug_onprem_dicom_preretire_accession_status}  \
+-e locutus_debug_onprem_dicom_preretire_accession_status_only_changed=${locutus_debug_onprem_dicom_preretire_accession_status_only_changed} \
+-e locutus_onprem_dicom_bucket_path_top_level=${locutus_onprem_dicom_bucket_path_top_level}  \
+-e locutus_expand_phase_sweep_beyond_manifest=${locutus_expand_phase_sweep_beyond_manifest}  \
+-e locutus_force_success=${locutus_force_success}   \
+-e locutus_verbose=${locutus_verbose}   \
+-e VAULT_NAME_SPACE=${VAULT_NAME_SPACE}  \
+-e locutus_onprem_dicom_use_manifest_QC_status=${locutus_onprem_dicom_use_manifest_QC_status}  \
+-e locutus_onprem_dicom_subject_ID_preface=${locutus_onprem_dicom_subject_ID_preface} \
+-e locutus_debug_onprem_dicom_force_reprocess_accession_status=${locutus_debug_onprem_dicom_force_reprocess_accession_status} \
+-e locutus_allow_processing_of_duplicates=${locutus_allow_processing_of_duplicates} \
+-e locutus_dicom_remove_text_from_input_accessions=${locutus_dicom_remove_text_from_input_accessions} \
+-e locutus_workspaces_enable=${locutus_workspaces_enable}  \
+-e locutus_workspace_name=${locutus_workspace_name}
+
+

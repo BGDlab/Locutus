@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 03 November 2025_
+_last update: 05 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -115,9 +115,9 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
     * [DICOM Summarizer command configuration](#cfg_dicom_summarizer)
         * [DICOM Summarizer command manifest](#cfg_dicom_summarizer_manifest)
 * [Deployment](#deployment)
+    * [Local Deployment](#deployment_local)
     * [Jenkins-based Deployment](#deployment_jenkins)
         * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
-    * [Local Deployment](#deployment_local")
 * [3rd Party Module Dependencies (in-house or not)](#3rd_party)
 
 
@@ -153,7 +153,9 @@ where applicable, as follows:
 
 Locutus development began in 2018 with an initially MRI-focused, but DICOM-generalized, de-identification module
 which was to automatically process any new MRIs appearing in our Research PACS,
-an instance of Orthanc.  This entailed essentially launching Locutus as a service
+an instance of Orthanc.
+
+This entailed essentially launching Locutus as a service
 through Jenkins, with a built-in polling mechanism utilizing
 the following configuration keys:
 
@@ -163,16 +165,7 @@ the following configuration keys:
 * `locutus_continuous_wait_secs` (number of seconds to pause between any
 "continuous" runs)
 
-When using Jenkins to launch Locutus into the above
-continuous mode, injecting a Jenkins environment variable `XTRA_DOCKER_RUN_FLAGS`
-that includes `-d` will detach the Locutus docker container as
-a background daemon, allowing the Jenkins job to immediately terminate.
-However, omitting this flag and keeping the job running in the Jenkins
-foreground allows the Jenkins job logging to be enjoyed "for free."
-For further information on `XTRA_DOCKER_RUN_FLAGS`
-and TRiG's corresponding `AAA-Jenkins-Setup` job's artifact script
-(`general_infra/deploy_etl.sh`),
-see [Jenkins-based Deployment](#deployment_jenkins).
+For further information on deployment, please also refer to the subsequent sections on [Deployment](#deployment) and  [Jenkins-based Deployment](#deployment_jenkins).
 
 
 Although the current approach is now primarily Manifest-Driven
@@ -181,10 +174,10 @@ we may still encounter scenarios which could benefit from this
 continuous Change-Driven processing approach.
 With multiple Locutus configurations possible for multiple Locutus
 deployments (whether through Jenkins or otherwise), the possibilities
-are nearly limitless.
+really are nearly limitless.
 See [Future Considerations to Approach](#highlevel_future)
 and [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
-for further info....
+for further info.
 
 
 <A NAME="current_manifest_driven_approach"></A>
@@ -220,7 +213,7 @@ deployments (whether through Jenkins or otherwise), the possibilities
 are nearly limitless.
 See [Future Considerations to Approach](#highlevel_future)
 and [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
-for further info....
+for further info.
 
 
 <A NAME="general_locutus_approach"></A>
@@ -278,13 +271,41 @@ OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_d
 
 
 <A NAME="highlevel_onprem_dicoms"></A>
-#### OnPrem DICOM De-ID module, additional approach details
+### OnPrem DICOM De-ID module, additional approach details
+
+As already shared up at the top of this reference, the OnPrem DICOM De-ID module's De-ID Transform Phase may generally be viewed as follows:
+
+<IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
+
+The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
+
+The following Python code snippet shows its integration:
+
+>                dicom_anon_Popen_args = [
+>                    'python3',
+>                    './src_3rdParty/dicom_anon.py',
+>                    '--spec_file',
+>                    DEFAULT_DICOM_ANON_SPEC_FILE,
+>                    '--modalities',
+>                    DEFAULT_DICOM_ANON_MODALITIES_STR,
+>                    '--force_replace',
+>                    curr_replacement_patient_info,  # for 'R's in dicom_anon_spec_file
+>                    '--exclude_series_descs',
+>                    DICOM_SERIES_DESCS_TO_EXCLUDE,
+>                    '{0}'.format(curr_uuid_id_images_path),
+>                    '{0}'.format(deidentified_dirname)
+>                ]
+>
+>                proc = Popen(dicom_anon_Popen_args, stdout=PIPE, stderr=PIPE)
+>                (stdoutdata, stderrdata) = proc.communicate()
+
+
 
 
 
 
 <A NAME="highlevel_dicom_summarizer"></A>
-### DICOM Summarizer command for DICOM modules, including the OnPrem DICOM modules
+### DICOM Summarizer command for OnPrem De-ID module
 
 The DICOM Summarizer is to be a module-agnostic command to view the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
 
@@ -571,29 +592,61 @@ C333221 | Radiology | 	1234 | spine |	1235123 | | |
 ## Deploying Locutus
 
 
-Aspects of deployment via Locutus is discussed briefly in the following sub-sections:
+As already shared up at the top of this reference, there are many internal infrastructure dependencies and external components that may currently require customization to integrate within your own infrastructure.
 
+Such dependencies and external components may include:
+
+* compute nodes (e.g., Linux-based Virtual Machines)
+* containerization (e.g., docker/podman)
+* database (e.g., [Postgres](https://www.postgresql.org))
+* secrets manager (e.g., [Vault](https://www.hashicorp.com/en/products/vault) & a potential secrets manager package)
+* research PACS (e.g., [Orthanc](https://www.orthanc-server.com))
+* storage options (local or cloud-based) for both interim & output results
+
+Aspects of Locutus deployment locall, or via Jenkins, are discussed briefly in the following sub-sections:
+
+* [Local Deployment](#deployment_local)
 * [Jenkins-based Deployment](#deployment_jenkins)
     * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
-* [Local Deployment](#deployment_local)
 
+
+<A NAME="deployment_local"></A>
+### Local Deployment
+
+Locutus is generally containerized, that is, built into a Docker image, to deploy as Docker containers.  Such images are usually built and tagged as `locutus_<branch>_image`.   Given a git repo branch of `dev_bgd_lab`, for example, the Docker build command would be:
+
+> `docker build -t locutus_dev_bgd_lab_image:latest .`
+
+Within this reference repo are some example scripts to assist in manually deploying such Locutus containers locally.
+
+* `./scripts/run_docker_*.sh` are the lowest-level base `run_docker` scripts and are not typically called directly.
+
+* `./deploy_locutus_*.sh` are higher-level scripts to invoke the base `run_docker` scripts, for relatively simple local deployments of a single Locutus container.
+
+* `./conduct_locutus_subbatches.sh` is the Locutus Conductor, to assist with larger manifests by sub-dividing the manifest and deploying the sub-manifests across multiple Locutus containers, perhaps even across multiple nodes. Please note that multiple nodes still require that the Conductor be manually run on each node with an argument list that would vary only by the particular sub-batch numbers to deploy on the given node.
+
+    For example, to deploy 24 containers, eight (8) on each of three (3) nodes, the following commands might be utilized on each of the nodes, with only the `-r(ange)` argument changing:
+
+    * node1: `sudo -E ./conduct_locutus_subbatches.sh -m manifest_input.csv -s suffix -dDK -N 24 -r 1:8`
+
+    * node2: `sudo -E ./conduct_locutus_subbatches.sh -m manifest_input.csv -s suffix -dDK -N 24 -r 9:16`
+
+    * node3: `sudo -E ./conduct_locutus_subbatches.sh -m manifest_input.csv -s suffix -dDK -N 24 -r 17:24`
 
 
 <A NAME="deployment_jenkins"></A>
 ### Jenkins-based Deployment
 
+We have enjoyed utilizing the Jenkins CI/CD tool, and its ability to create user-configurable parameterized jobs, to assist in abstracting some of the lower-level command-line deployment possibilities.  This allows end users to employ a basic job-specific GUI, with system definable retention of logs, to streamline and automate Locutus deployment.
 
-When using Jenkins to launch Locutus into the above
-continuous mode, injecting a Jenkins environment variable `XTRA_DOCKER_RUN_FLAGS`
-that includes `-d` will detach the Locutus docker container as
-a background daemon, allowing the Jenkins job to immediately terminate.
-However, omitting this flag and keeping the job running in the Jenkins
-foreground allows the Jenkins job logging to be enjoyed "for free."
-For further information on `XTRA_DOCKER_RUN_FLAGS`
-and the `AAA-Jenkins-Setup` job's artifact script, `general_infra/deploy_etl.sh`,
-which processes them, see [Jenkins-based Deployment](#deployment_jenkins).
+To support such deployment through Jenkins, we have included the following general infrastructure scripts within the `./general_infra/` subdir of this reference repo.
 
+* `./general_infra/deploy_setup_vars.sh`: low-level helper script to facilitate deployment of varying application types.
+* `./general_infra/deploy_etl.sh`: an ETL-oriented deployment script, to deploy the applicable but a single time.
 
+Within the same `./general_infra/` subdir also exist two pair of additional clues, as used in configuring the Jenkins jobs, one pair for `<type>=DeID`, and another for `<type>=Summarizer`:
+* `./general_infra/jenkins_sample_environment_properties_content_for_<type>>_job.txt`: to pack a list of applicable environment variables into `XTRA_DOCKER_RUN_FLAGS`, to be passed into the Locutus container at deployment.
+* `./general_infra/jenkins_sample_execute_shell_for_<type>_job.txt`: a very thin wrapper around `./general_infra/deploy_etl.sh`
 
 
 <A NAME="deployment_jenkins_hybrid_driven"></A>
@@ -612,12 +665,12 @@ are nearly limitless.
 This might require multiple Jenkins jobs,
 but can all still be done from the same Locutus code base.
 
-
-<A NAME="deployment_local"></A>
-### Local Deployment
-
-FORTHCOMING
-
+When using Jenkins to launch Locutus into such a
+continuous mode, injecting a Jenkins environment variable `XTRA_DOCKER_RUN_FLAGS`
+that includes `-d` will detach the Locutus docker container as
+a background daemon, allowing the Jenkins job to immediately terminate.
+However, omitting this flag and keeping the job running in the Jenkins
+foreground allows the Jenkins job logging to be enjoyed "for free."
 
 <A NAME="3rd_party"></A>
 ## 3rd Party Module Dependencies (in-house or not)

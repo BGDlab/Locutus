@@ -1,0 +1,14 @@
+echo "Hello Jenkins build world"
+
+echo "DEBUG: user supplied job_description == ${job_description}"
+
+# Replace any spaces in the input filename with underscores:
+# WARNING: even with the below export, the following safer_input_manifest_name does not end up in the the post-build actions
+export safer_input_manifest_name_csv=`echo ${onprem_dicom_images_manifest} | sed 's/ /_/g'`
+echo "DEBUG: SAFE input manifest filename: onprem_dicom_images_manifest (UNDERSCORE CSV) == ${safer_input_manifest_name_csv}"
+
+#echo "r3m0 DEBUG: ABOUT to starting up deploy_etl.sh with the following XTRA_DOCKER_RUN_FLAGS: \"${XTRA_DOCKER_RUN_FLAGS}\""
+# Utilize the imported general_infra artifacts from AAA-Jenkins-Setup:
+# USING: source ${WORKSPACE}/general_infra/deploy_etl.sh
+echo "Jenkins Build Step, `Execute shell` about to call ${WORKSPACE}/general_infra/deploy_etl.sh"
+source ${WORKSPACE}/general_infra/deploy_etl.sh
