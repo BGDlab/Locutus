@@ -71,5 +71,8 @@ The following Python code snippet shows its integration:
 >                proc = Popen(dicom_anon_Popen_args, stdout=PIPE, stderr=PIPE)
 >                (stdoutdata, stderrdata) = proc.communicate()
 
+## FOR MORE DETAILS...
 
-Further excerpts from Children's Hospital of Philadelphia Research Institute internal repo for Locutus may be found in our reference branch, at: https://github.com/BGDlab/Locutus/tree/reference
+
+Detailed documentation and excerpts from the Children's Hospital of Philadelphia Research Institute internal repo for Locutus may be found in this `reference` branch of this BGD Lab repository, at:
+* https://github.com/BGDlab/Locutus/tree/reference
