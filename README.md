@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 05 November 2025_
+_last update: 06 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -23,7 +23,7 @@ From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automa
 
 The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
 
-The following Python code snippet shows its integration:
+The following Python code snippet shows its integration from the **OnPrem DICOM De-ID** module:
 
 >                dicom_anon_Popen_args = [
 >                    'python3',
@@ -270,7 +270,7 @@ picked up by a Phase Sweep at its respective Phase in processing, even if it is 
 
 Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (De-identify) | Phase05: LOAD (Upload to Target) |
 ----- | ------- | ------- | ------- | ------- | ------- |
-OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | de-identify locally using [`dicom_anon.py`](./dicom_anon.py) | upload to de-identified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip` |
+OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | de-identify locally using [`dicom_anon.py`](./src_3rdParty/dicom_anon.py) | upload to de-identified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip`, or local Isilon target |
 
 
 
@@ -283,7 +283,8 @@ As already shared up at the top of this reference, the OnPrem DICOM De-ID module
 
 The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
 
-The following Python code snippet shows its integration:
+The following Python code snippet shows its integration from the **OnPrem DICOM De-ID** module
+(in [`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py#3631-3644)):
 
 >                dicom_anon_Popen_args = [
 >                    'python3',
@@ -324,7 +325,7 @@ With the addition of the Preloader, a Summarizer sidecar, the manifest_status va
 As additional modules become available for processing,
 alternative approaches might be considered in registering them with
 Locutus.  Currently, any new modules are merely hard-coded into
-`main_locutus.py`, along with all applicable calls to the modules'
+[`./main_locutus.py`](./main_locutus.py), along with all applicable calls to the modules'
 `Setup()` and `Process()` methods.  If a module could instead register itself
 with Locutus, then hardcoding of the various might be bypassed, with Locutus
 merely expecting and calling the corresponding `Setup()` and `Process()` accordingly.
@@ -344,7 +345,7 @@ Likewise, as more modules standardize upon and utilize a shared infrastructure
 (e.g., eventually a `<module>_MANIFEST_STATUS` table for each module,
 not just for the Aperio and DICOM modules),
 more and more of this infrastructure handling can be provided by
-Locutus' `main_locutus.py` itself.
+Locutus' [`./main_locutus.py`](./main_locutus.py) itself.
 
 At the very least, consider that Locutus should begin to provide a
 framework and set of available methods for such standard procedures
@@ -354,8 +355,8 @@ and there is certainly much overlapping redundant code that could be consolidate
 
 ##### Enhancing the logging in Locutus
 
-Eventually integrate with enhanced logging capability (such as logging levels) and/or tools, but for now we primarily just take advantage of the "free logging" available from Jenkins itself when deploying the job as a foreground job (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by
-`general_infra/deploy_etl.sh`)
+Eventually integrate with enhanced logging capability (such as logging levels) and/or tools, but for now we primarily just take advantage of the "free logging" available from Jenkins itself when deploying the job as a foreground job (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by [`./general_infra/deploy_etl.sh`](./general_infra/deploy_etl.sh).
+
 
 ##### Going manifest-free (at least, manifest-once, after a 1-time manifest load)
 
@@ -379,9 +380,9 @@ where applicable, are described below for each of the following Locutus modules:
 * [DICOM Summarizer command configuration](#cfg_dicom_summarizer)
 
 
-NOTE: The primary Locutus configuration shall be supplied as `./config.yaml` (as originally stored in Vault),
-but within it might exist Vault paths to additional configurations for each module,
-thereby negating the need for replication of such configs.
+NOTE: The primary Locutus configuration shall be supplied as a `./config.yaml` (once pulled from Vault),
+but within it might exist nested Vault paths to additional configurations for each module,
+thereby negating the need for replication of any such configs.
 
 
 <A NAME="cfg_locutus"></A>
@@ -623,11 +624,12 @@ Locutus is generally containerized, that is, built into a Docker image, to deplo
 
 Within this reference repo are some example scripts to assist in manually deploying such Locutus containers locally.
 
-* `./scripts/run_docker_*.sh` are the lowest-level base `run_docker` scripts and are not typically called directly.
+* `./scripts/run_docker_*.sh`  (e.g.,  [`./scripts/run_docker_onVM_dev_bgd_lab_onprem.sh`](./scripts/run_docker_onVM_dev_bgd_lab_onprem.sh)) are the lowest-level base `run_docker` scripts and are not typically called directly.
 
-* `./deploy_locutus_*.sh` are higher-level scripts to invoke the base `run_docker` scripts, for relatively simple local deployments of a single Locutus container.
+* `./deploy_locutus_*.sh` (e.g., [`./deploy_locutus_onVM_dev_bgd_lab_onprem.sh`](./deploy_locutus_onVM_dev_bgd_lab_onprem.sh)) are higher-level scripts to invoke the base `run_docker` scripts, for relatively simple local deployments of a single Locutus container.
 
-* `./conduct_locutus_subbatches.sh` is the Locutus Conductor, to assist with larger manifests by sub-dividing the manifest and deploying the sub-manifests across multiple Locutus containers, perhaps even across multiple nodes. Please note that multiple nodes still require that the Conductor be manually run on each node with an argument list that would vary only by the particular sub-batch numbers to deploy on the given node.
+
+* [`./conduct_locutus_subbatches.sh`](./conduct_locutus_subbatches.sh) is the Locutus Conductor, to assist with larger manifests by sub-dividing the manifest and deploying the sub-manifests across multiple Locutus containers, perhaps even across multiple nodes. Please note that multiple nodes still require that the Conductor be manually run on each node with an argument list that would vary only by the particular sub-batch numbers to deploy on the given node.
 
     For example, to deploy 24 containers, eight (8) on each of three (3) nodes, the following commands might be utilized on each of the nodes, with only the `-r(ange)` argument changing:
 
@@ -647,12 +649,15 @@ We have enjoyed utilizing the Jenkins CI/CD tool, and its ability to create user
 
 To support such deployment through Jenkins, we have included the following general infrastructure scripts within the `./general_infra/` subdir of this reference repo.
 
-* `./general_infra/deploy_setup_vars.sh`: low-level helper script to facilitate deployment of varying application types.
-* `./general_infra/deploy_etl.sh`: an ETL-oriented deployment script, to deploy the applicable but a single time.
+[`./conduct_locutus_subbatches.sh`](./conduct_locutus_subbatches.sh)
+
+* [`./general_infra/deploy_setup_vars.sh`](./general_infra/deploy_setup_vars.sh): low-level helper script to facilitate deployment of varying application types.
+* [`./general_infra/deploy_etl.sh`](./general_infra/deploy_etl.sh) : an ETL-oriented deployment script, to deploy the applicable but a single time.
 
 Within the same `./general_infra/` subdir also exist two pair of additional clues, as used in configuring the Jenkins jobs, one pair for `<type>=DeID`, and another for `<type>=Summarizer`:
-* `./general_infra/jenkins_sample_environment_properties_content_for_<type>>_job.txt`: to pack a list of applicable environment variables into `XTRA_DOCKER_RUN_FLAGS`, to be passed into the Locutus container at deployment.
-* `./general_infra/jenkins_sample_execute_shell_for_<type>_job.txt`: a very thin wrapper around `./general_infra/deploy_etl.sh`
+
+* `./general_infra/jenkins_sample_environment_properties_content_for_<type>>_job.txt`: (e.g., [`./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt`](./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt))  to pack a list of applicable environment variables into `XTRA_DOCKER_RUN_FLAGS`, to be passed into the Locutus container at deployment.
+* `./general_infra/jenkins_sample_execute_shell_for_<type>_job.txt`:  (e.g., [`./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt`](./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt)) a very thin wrapper around `./general_infra/deploy_etl.sh`
 
 
 <A NAME="deployment_jenkins_hybrid_driven"></A>
