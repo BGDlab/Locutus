@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 05 November 2025_
+_last update: 06 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -23,7 +23,8 @@ From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automa
 
 The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
 
-The following Python code snippet shows its integration:
+The following Python code snippet shows its integration from the **OnPrem DICOM De-ID** module:
+
 
 >                dicom_anon_Popen_args = [
 >                    'python3',
