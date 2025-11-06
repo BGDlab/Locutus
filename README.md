@@ -92,7 +92,7 @@ SOFTWARE.
 <BR/>
 
 ----------------------------------------------------------------
-
+<A NAME="detailed_dox"></A>
 # Detailed Locutus Documentation
 
 
@@ -605,7 +605,7 @@ Such dependencies and external components may include:
 * research PACS (e.g., [Orthanc](https://www.orthanc-server.com))
 * storage options (local or cloud-based) for both interim & output results
 
-Aspects of Locutus deployment locall, or via Jenkins, are discussed briefly in the following sub-sections:
+Aspects of Locutus deployment locally, or via Jenkins, are discussed briefly in the following sub-sections:
 
 * [Local Deployment](#deployment_local)
 * [Jenkins-based Deployment](#deployment_jenkins)
@@ -640,6 +640,8 @@ Within this reference repo are some example scripts to assist in manually deploy
 ### Jenkins-based Deployment
 
 We have enjoyed utilizing the Jenkins CI/CD tool, and its ability to create user-configurable parameterized jobs, to assist in abstracting some of the lower-level command-line deployment possibilities.  This allows end users to employ a basic job-specific GUI, with system definable retention of logs, to streamline and automate Locutus deployment.
+
+<IMG SRC="./docs/images/jenkins_sample_OnPremDeID_deploy.png" WIDTH="400" HEIGHT="400" />
 
 To support such deployment through Jenkins, we have included the following general infrastructure scripts within the `./general_infra/` subdir of this reference repo.
 

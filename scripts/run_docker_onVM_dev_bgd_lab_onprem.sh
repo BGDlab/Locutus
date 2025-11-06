@@ -5,8 +5,10 @@
 # for an image as built via:
 # docker build -t locutus_dev_bgd_lab_image:latest .
 #
-# onprem DOES NOT expect ${GOOGLE_APPLICATION_CREDENTIALS} to be passed in by the environment, and to link to an existing .json for GCP
-# expects ${LOCUTUS_CONTAINER_SUFFIX} to also be passed in by the environment
+# onprem expects ${LOCUTUS_CONTAINER_SUFFIX} to also be passed in by the environment, as well as:
+# * VAULT_ADDR
+# * VAULT_NAMESPACE
+# * VAULT_TOKEN
 # 5/15/2024: now expects ${LOCUTUS_INTERIM_PROCESSING_DIR} for explicitly mounting the LOCUTUS_INTERIM_PROCESSING_DIR...
 
 # NOTE: without the --rm  in the run (such that we can easily check logs)
@@ -35,15 +37,11 @@ echo "AND: will use LOCUTUS_ISILON_OUTPUT_DIR=[${LOCUTUS_ISILON_OUTPUT_DIR}]. Pl
 
 
 # set default VAULT_ADDR and VAULT_NAMESPACE
-# TODO: add a check so that we only set if not already set:
-#export VAULT_ADDR=https://risvault.research.chop.edu
-#export VAULT_NAMESPACE=trig
-# but will expect VAULT_TOKEN
 
 
 # NOTE: the following docker run currently still has CURR_ENV=develop, as:
 # -e CURR_ENV=develop \
-# TODO: double check where Joey's GCP run went, and change to production
+# TODO: double check and change to production?
 
 # NOTE: can test the following docker run WITHOUT a -d to keep in ForeGround for initial tests,
 # but now trying in the BackGround via a detached docker container:
