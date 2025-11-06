@@ -284,7 +284,7 @@ As already shared up at the top of this reference, the OnPrem DICOM De-ID module
 The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
 
 The following Python code snippet shows its integration from the **OnPrem DICOM De-ID** module
-(in [`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py#3631-3644)):
+(in [`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py#L3631-L3644)):
 
 >                dicom_anon_Popen_args = [
 >                    'python3',
