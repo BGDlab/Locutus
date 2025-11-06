@@ -649,8 +649,6 @@ We have enjoyed utilizing the Jenkins CI/CD tool, and its ability to create user
 
 To support such deployment through Jenkins, we have included the following general infrastructure scripts within the `./general_infra/` subdir of this reference repo.
 
-[`./conduct_locutus_subbatches.sh`](./conduct_locutus_subbatches.sh)
-
 * [`./general_infra/deploy_setup_vars.sh`](./general_infra/deploy_setup_vars.sh): low-level helper script to facilitate deployment of varying application types.
 * [`./general_infra/deploy_etl.sh`](./general_infra/deploy_etl.sh) : an ETL-oriented deployment script, to deploy the applicable but a single time.
 
