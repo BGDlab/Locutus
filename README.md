@@ -95,6 +95,8 @@ SOFTWARE.
 <A NAME="detailed_dox"></A>
 # Detailed Locutus Documentation
 
+<IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
+
 
 The rest of this  `README.md` will serve as a high-level overview and introduction into the implementation, configuration and usage details of Locutus.
 
