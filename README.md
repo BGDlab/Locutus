@@ -355,7 +355,7 @@ and there is certainly much overlapping redundant code that could be consolidate
 
 ##### Enhancing the logging in Locutus
 
-Eventually integrate with enhanced logging capability (such as logging levels) and/or tools, but for now we primarily just take advantage of the "free logging" available from Jenkins itself when deploying the job as a foreground job (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by [`./general_infra/deploy_etl.sh`](./general_infra/deploy_etl.sh).
+Eventually integrate with enhanced logging capability (such as logging levels) and/or tools, but for now we primarily just take advantage of the "free logging" available from Jenkins itself when deploying the job as a foreground job (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by [`./general_infra/deploy_etl.sh`](./general_infra/deploy_etl.sh)).
 
 
 ##### Going manifest-free (at least, manifest-once, after a 1-time manifest load)
