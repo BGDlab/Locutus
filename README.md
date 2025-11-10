@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 06 November 2025_
+_last update: 10 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -44,7 +44,7 @@ The following Python code snippet shows its integration from the **OnPrem DICOM 
 >                (stdoutdata, stderrdata) = proc.communicate()
 
 
-
+<A NAME="reference_only"></A>
 ## **REFERENCE ONLY**
 
 Please note that this is a _**reference snapshot**_ of Locutus, as from an internal repo at the Children's Hospital of Philadelphia Research Institute.  We include for your reference a sample Locutus module (**OnPrem DICOM De-ID**, as used to de-identify clinical radiology for BGD's research), and a sample Locutus command (**the Summarizer**, to assist in preloading and monitoring a batch of accessions for de-identification).
@@ -57,6 +57,7 @@ Please see the [Deploying Locutus](#deployment) section for further details.
 Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to us, at:
 *  DL-locutus-support@chop.edu
 
+<A NAME="license_info"></A>
 ## LICENSE INFO
 
 This project is released under a Non-Commercial Research License. For commercial use, please contact us at DL-locutus-support@chop.edu for licensing terms.
