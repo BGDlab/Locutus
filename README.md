@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 10 November 2025_
+_last update: 11 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -344,7 +344,7 @@ rather than be limited to the current default maximum phase of 5.
 
 Likewise, as more modules standardize upon and utilize a shared infrastructure
 (e.g., eventually a `<module>_MANIFEST_STATUS` table for each module,
-not just for the Aperio and DICOM modules),
+not just for the DICOM De-ID modules),
 more and more of this infrastructure handling can be provided by
 Locutus' [`./main_locutus.py`](./main_locutus.py) itself.
 
@@ -443,7 +443,7 @@ locutus_force_success: | False | use "True" to avoid non-0 returns for any error
 locutus_debug_keep_interim_files: | False | use "True" to *not* delete any interim files created during processing;<BR/>default is to delete such temporary files once subsequent processing Phases are completed |
 locutus_allow_processing_of_duplicates: | False | use "True" when, for example, setting up large tests of the same accession |
 locutus_disable_phase_sweep: | False | use "True" when processing multiple jobs concurrently, to *not* sweep for any objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False, to sweep for any objects not yet completely processed (through Phase 5) once the manifest-driven Phases 1-3 are completed, but this can cause unintended job contention side-effects with concurrent deployments (Currently only supported by some modules) |
-locutus_expand_phase_sweep_beyond_manifest: | False | use "True" when wanting to processing *any* objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False to limit phase sweeps (when not otherwise disabled) to any objects not yet completely processed (through Phase 5) that are listed within the current input manifest (Currently only supported by the DICOM modules) |
+locutus_expand_phase_sweep_beyond_manifest: | False | use "True" when wanting to processing *any* objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False to limit phase sweeps (when not otherwise disabled) to any objects not yet completely processed (through Phase 5) that are listed within the current input manifest (Currently only supported by the DICOM De-ID modules) |
 locutus_workspaces_enable: | False | use "True" when wanting to decouple a project's DB tables from the standard set of Locutus tables, allowing any multi-project accessions to have their own project-specific attributes. |
 locutus_workspace_name: | "default" | to identify & configure the Locutus module+workspace table names when `locutus_workspaces_enable` is  "True". |
 Jenkins' JOB_DESCRIPTION: | "" | informational info for CFG_OUT|
@@ -685,9 +685,11 @@ foreground allows the Jenkins job logging to be enjoyed "for free."
 <A NAME="3rd_party"></A>
 ## 3rd Party Module Dependencies (in-house or not)
 
+In addition to the various infrastructure needs mentioned above in  [Local Deployment](#deployment_local), the following packages are key code dependencies within their respective Locutus modules:
+
 * dicom_anon.py from:
    https://github.com/chop-dbhi/dicom-anon
- (as used in the OnPrem DICOM module) using a snapshot up to latest known `python3` branch commit, of 18 Dec 2019:
+ (as used in the OnPrem DICOM De-ID module) using a snapshot up to latest known `python3` branch commit, of 18 Dec 2019:
    https://github.com/chop-dbhi/dicom-anon/commit/fddbee0a18cb9e2bebfe9bbd41a3a1e28c774fc8
    
 
