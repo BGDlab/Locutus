@@ -278,7 +278,7 @@ OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./src_modules/mod
 <A NAME="highlevel_onprem_dicoms"></A>
 ### OnPrem DICOM De-ID module, additional approach details
 
-As already shared up at the top of this reference, the OnPrem DICOM De-ID module's De-ID Transform Phase may generally be viewed as follows:
+As already shared up at the top of this reference, the **OnPrem DICOM De-ID** module's De-ID Transform Phase may generally be viewed as follows:
 
 <IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
 
@@ -349,7 +349,7 @@ rather than be limited to the current default maximum phase of 5.
 
 Likewise, as more modules standardize upon and utilize a shared infrastructure
 (e.g., eventually a `<module>_MANIFEST_STATUS` table for each module,
-not just for the DICOM De-ID modules),
+not just for the **DICOM De-ID** modules),
 more and more of this infrastructure handling can be provided by
 Locutus' [`./main_locutus.py`](./main_locutus.py) itself.
 
@@ -370,7 +370,7 @@ Locutus currently expects a manifest for almost all of its processing. The manag
 
 Ideally, a future Locutus enhancement shall include options to load a project manifest into a workspace one time (via, for example, a `load-manifest` command), and to thereafter process the project "manifest-free", either in its entirety, or by way of a configurable filter (e.g., only those currently in a non-PROCESSED state, etc.).
 
-It may also be worth noting here that our Jenkins instance is used to deploy not only DICOM De-ID jobs on an as-needed basis, but also DICOM Summarizer jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
+It may also be worth noting here that our Jenkins instance is used to deploy not only **DICOM De-ID** jobs on an as-needed basis, but also **DICOM Summarizer** jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
 each Jenkins job will need the latest manifest manually re-attached.  With many such regularly scheduled Summarizers automated through Jenkins, this can likewise be unnecessarily cumbersome and potentially error-prone.
 
 Such a "manifest-once" enhancement, though still manifest-driven, would significantly streamline the entire processing lifecycle for a batch, from De-ID through to the Summarizer.
@@ -448,7 +448,7 @@ locutus_force_success: | False | use "True" to avoid non-0 returns for any error
 locutus_debug_keep_interim_files: | False | use "True" to *not* delete any interim files created during processing;<BR/>default is to delete such temporary files once subsequent processing Phases are completed |
 locutus_allow_processing_of_duplicates: | False | use "True" when, for example, setting up large tests of the same accession |
 locutus_disable_phase_sweep: | False | use "True" when processing multiple jobs concurrently, to *not* sweep for any objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False, to sweep for any objects not yet completely processed (through Phase 5) once the manifest-driven Phases 1-3 are completed, but this can cause unintended job contention side-effects with concurrent deployments (Currently only supported by some modules) |
-locutus_expand_phase_sweep_beyond_manifest: | False | use "True" when wanting to processing *any* objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False to limit phase sweeps (when not otherwise disabled) to any objects not yet completely processed (through Phase 5) that are listed within the current input manifest (Currently only supported by the DICOM De-ID modules) |
+locutus_expand_phase_sweep_beyond_manifest: | False | use "True" when wanting to processing *any* objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False to limit phase sweeps (when not otherwise disabled) to any objects not yet completely processed (through Phase 5) that are listed within the current input manifest (Currently only supported by the **DICOM De-ID** modules) |
 locutus_workspaces_enable: | False | use "True" when wanting to decouple a project's DB tables from the standard set of Locutus tables, allowing any multi-project accessions to have their own project-specific attributes. |
 locutus_workspace_name: | "default" | to identify & configure the Locutus module+workspace table names when `locutus_workspaces_enable` is  "True". |
 Jenkins' JOB_DESCRIPTION: | "" | informational info for CFG_OUT|
@@ -558,7 +558,7 @@ C333221 | Radiology | 	1234 | spine |	1235123 | REPROCESS: update da cfgs  | |
 <A NAME="cfg_dicom_summarizer"></A>
 ### DICOM Summarizer command: DB, Vault, Configs, and Manifests
 
-The DICOM Summarizer command can be used to summarize the DICOM De-ID statuses within any Locutus workspace for any Locutus De-ID module so configured.
+The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** statuses within any Locutus workspace for any Locutus **DICOM De-ID** module so configured.
 
 
 
@@ -569,7 +569,7 @@ configuration key | sample default value | description |
 process_dicom_summarize_stats: | False | use "True" for Locutus to run this command;<BR/>may be overriden by environment variable: `process_dicom_summarize_stats` |
 dicom_summarize_stats_manifest_csv: | dicom_summarize_stats_manifest.csv | name of the input manifest file expected to exist in the deployment job's workspace directory;<BR/>may be overriden by environment variable: `dicom_summarize_stats_manifest_csv` |
 dicom_summarize_dicom_stage_config_vault_path: | trig:/kv1/trig-dicom-staging/production | Vault path to the DICOM Staging configuration |
-dicom_summarize_stats_module: | 'OnPrem' | summarize for the specified DICOM De-ID module |
+dicom_summarize_stats_module: | 'OnPrem' | summarize for the specified **DICOM De-ID** module |
 dicom_summarize_stats_show_accessions:  | True | set to False to show only overall summarized output, rather than a detailed summary per accession |
 dicom_summarize_stats_redact_accessions: | False | set to True to redact accession_nums in summarized output, if showing accessions |
 dicom_summarize_stats_enable_db_updates: | False | set to True to enable Summarizer sidecar functionality that may update the database (normally read-only) |
@@ -695,7 +695,7 @@ In addition to the various infrastructure needs mentioned above in  [Local Deplo
 
 * dicom_anon.py from:
    https://github.com/chop-dbhi/dicom-anon
- (as used in the OnPrem DICOM De-ID module) using a snapshot up to latest known `python3` branch commit, of 18 Dec 2019:
+ (as used in the **OnPrem DICOM De-ID** module) using a snapshot up to latest known `python3` branch commit, of 18 Dec 2019:
    https://github.com/chop-dbhi/dicom-anon/commit/fddbee0a18cb9e2bebfe9bbd41a3a1e28c774fc8
    
 
