@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 11 November 2025_
+_last update: 16 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -305,9 +305,14 @@ The following Python code snippet shows its integration from the **OnPrem DICOM 
 >                proc = Popen(dicom_anon_Popen_args, stdout=PIPE, stderr=PIPE)
 >                (stdoutdata, stderrdata) = proc.communicate()
 
-
-
-
+Please notice the following `dicom-anon` flags as used for the above call from this **OnPrem DICOM De-ID** module:
+* `--spec_file` DEFAULT_DICOM_ANON_SPEC_FILE, the `dicom_anon_spec.dat` file
+* `--modalities` DEFAULT_DICOM_ANON_MODALITIES_STR (`'cr,ct,dx,mr,nm,ot,rf,us,xa,xr'`) DICOM modality types to include (with all others to be quarantined)
+* `--exclude_series_descs` DICOM_SERIES_DESCS_TO_EXCLUDE,   # and exclude any GCP-unaware screen-save-like PHI series...
+* `--exclude_series_descs` DICOM_SERIES_DESCS_TO_EXCLUDE (`'screen save, dose report, basic text SR'`) screen-save-like DICOM series types to exclude (with all others to be quarantined)
+*  `--force_replace` allows for the injection of a coded **Research_ID** to replace the DICOM metadata values for any such DICOM tags that are flagged with an "R" in the `dicom_anon_spec.dat` file, currently configured to replace the following tags:
+	*  **Patient's Name (0010,0010)**
+	*  **Patient ID (0010,0020)**
 
 
 <A NAME="highlevel_dicom_summarizer"></A>
@@ -606,7 +611,8 @@ Such dependencies and external components may include:
 * containerization (e.g., docker/podman)
 * database (e.g., [Postgres](https://www.postgresql.org))
 * secrets manager (e.g., [Vault](https://www.hashicorp.com/en/products/vault) & a potential secrets manager package)
-* research PACS (e.g., [Orthanc](https://www.orthanc-server.com))
+* Research PACS (e.g., [Orthanc](https://www.orthanc-server.com))
+* PACS Stager (to index new DICOM arrivals to the Research PACS)
 * storage options (local or cloud-based) for both interim & output results
 
 Aspects of Locutus deployment locally, or via Jenkins, are discussed briefly in the following sub-sections:
