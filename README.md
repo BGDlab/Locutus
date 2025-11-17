@@ -283,6 +283,8 @@ As already shared up at the top of this reference, the **OnPrem DICOM De-ID** mo
 <IMG SRC="./docs/images/phase04transform.png" WIDTH="600" HEIGHT="200" />
 
 The key to the **OnPrem DICOM De-ID** module, as used to de-identify the DICOM metadata of clinical radiology for BGD's research, is  [dicom-anon](https://github.com/chop-dbhi/dicom-anon).
+Its `dicom_anon_spec.dat` file serves as the DICOM metadata de-identification profile, a blend of both "remove list" and "keep list", with no further downstream pixel-level de-identification in this particular OnPrem module.
+
 
 The following Python code snippet shows its integration from the **OnPrem DICOM De-ID** module
 (in [`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py#L3631-L3644)):
@@ -306,14 +308,14 @@ The following Python code snippet shows its integration from the **OnPrem DICOM 
 >                (stdoutdata, stderrdata) = proc.communicate()
 
 Please notice the following `dicom-anon` flags as used for the above call from this **OnPrem DICOM De-ID** module:
-* `--spec_file` DEFAULT_DICOM_ANON_SPEC_FILE, the `dicom_anon_spec.dat` file
+* `--spec_file` DEFAULT_DICOM_ANON_SPEC_FILE, the `dicom_anon_spec.dat` file as a DICOM metadata de-identification profile
 * `--modalities` DEFAULT_DICOM_ANON_MODALITIES_STR (`'cr,ct,dx,mr,nm,ot,rf,us,xa,xr'`) DICOM modality types to include (with all others to be quarantined)
-* `--exclude_series_descs` DICOM_SERIES_DESCS_TO_EXCLUDE,   # and exclude any GCP-unaware screen-save-like PHI series...
-* `--exclude_series_descs` DICOM_SERIES_DESCS_TO_EXCLUDE (`'screen save, dose report, basic text SR'`) screen-save-like DICOM series types to exclude (with all others to be quarantined)
+* `--exclude_series_descs` DICOM_SERIES_DESCS_TO_EXCLUDE (`'screen save, dose report, basic text SR'`) screen-save-like DICOM series types to exclude (with all others to be quarantined) due to likelihood of PHI
 *  `--force_replace` allows for the injection of a coded **Research_ID** to replace the DICOM metadata values for any such DICOM tags that are flagged with an "R" in the `dicom_anon_spec.dat` file, currently configured to replace the following tags:
 	*  **Patient's Name (0010,0010)**
 	*  **Patient ID (0010,0020)**
 
+**PHI WARNING:** Even with using such a de-identification profile to allow DICOM metadata that is generally PHI-free, and excluding DICOM series that are more prone to PHI, such Protected Health Information can still slip through the cracks of DICOM de-identification.  This is especially true when DICOM objects are obtained from other institutions which might adhere to other practices.  For example, we have observed PHI in Series Description values as set by other institutions to include Physician or even Patient names.  The balance between (a) preventing any PHI to pass through de-identification, while (b) allowing enough DICOM metadata through de-identification to support downstream research, is an ever dynamic one, requiring vigilence and collaboration between the Locutus team and researchers.
 
 <A NAME="highlevel_dicom_summarizer"></A>
 ### DICOM Summarizer command for OnPrem De-ID module
