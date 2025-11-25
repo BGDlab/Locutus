@@ -15,9 +15,8 @@ APP_NAME = 'Locutus'
 # BUT FIRST....
 #APP_VERSION = '2025.07.03at0751_enhance_accession_num_2B_alpha-numeric'
 # AND THEN:
-APP_VERSION = '2025.08.28at1017_enhance_Migrator_to_better_handle_already_upgrade_alphanumerics'
-#WAS: APP_VERSION = '2025.08.27at0838_reUPGRADE_to_enhance_alphanumeric_accession_nums_ESP_with_MANIFEST_table'
-#WAS: MID: APP_VERSION = '2025.08.25at1754_deprecate_accession-num-src_from_old_multiUUID_SPLITS_to_enhance_alphanumeric_accession_nums'
+APP_VERSION = '2025.11.25at0703_Summarizer_fix_do_not_increment_PROCESSED_Counter_for_DUPLICATES_and_PreviousProcessingUsed'
+
 # BEWARE of Code Smells all throughout Locutus; so sorry about that, fellow developers.
 # Locutus is most definitely long overdue for a refactoring to clean up some of those smells.
 # Please see, for example: https://refactoring.guru/refactoring/smells
@@ -299,6 +298,16 @@ class Settings:
     MANIFEST_OUTPUT_STATUS_PROCESSED_WHOLEACCESSIONS = 'PROCESSED "Whole" ACCESSIONS (as in the above total PROCESSED)'
     #####
     MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_PREFIX = 'PREVIOUS_PROCESSING_USED_'
+    # for the Summarizer's separate "PREVIOUS_PROCESSING_USED_[*]" status line:
+    MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_WARNING_VS_DYNAMIC_COUNTS = '(NOTE: these counts are NOT included in the below Known Status PROCESSED counts, but ARE included in the Dynamically Grouped PROCESSED counts further below)'
+    ###
+    # for the Summarizer's separate "PROCESSED duplicates" status line:
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_PROCESSED = "PROCESSED duplicates"
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_PROCESSED_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above PROCESSED counts, NOR in the Dynamically Grouped PROCESSED counts further below)"
+    ###
+
+
+    #####
     # TODO: use these _PREFIX and _MIDFIX at, e.g., each whynot_manifest_status, but...
     # these 2x #defines just don't quite pop out the same in the code w/o the text syntax highlighting.
     MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_MIDFIX = '_PRERETIRE_OR_PREDELETE_OR_FORCE_TO_REPROCESS_'

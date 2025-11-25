@@ -3225,6 +3225,7 @@ class DICOMSummarizeStats:
         total_status_pending_radiology_merge = 0
         total_status_pending_radiology_resend = 0
         total_status_processsed = 0
+        total_status_processsed_duplicates = 0
         total_status_processsed_subaccessions = 0
         total_status_processsed_whole_accessions = 0
         total_status_previous_processsing = 0
@@ -4074,15 +4075,11 @@ class DICOMSummarizeStats:
                 total_not_found += 1
 
             elif manifest_status.upper() == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED:
-                total_status_processsed += 1
                 if self.locutus_settings.LOCUTUS_VERBOSE:
-                        print('VERBOSE: adding +1 to total_status_processsed={0}, manifest_status={1} for accession_str={2}'.format(
+                        print('VERBOSE: CHECKING FOR DUPLICATES before adding +1 to total_status_processsed={0}, manifest_status={1} for accession_str={2}'.format(
                             total_status_processsed, manifest_status, accession_str), flush=True)
-                # sub-counter for any PROCESSED sub-accessions from a split, i.e., with a fractional '.001', '.002', etc.
-                if '.' in accession_str:
-                    total_status_processsed_subaccessions += 1
 
-                # and for the "whole" accession counts, strip off any sub-accession `.001`, etc., by splitting at the `.`
+                # for the "whole" accession counts, strip off any sub-accession `.001`, etc., by splitting at the `.`
                 ####################
                 # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions with the MANIFEST table:
                 # NOTE: Q: any need to even split down into the ints anymore? nope.
@@ -4093,13 +4090,22 @@ class DICOMSummarizeStats:
                     processed_ints_accession_list.append(accession_int)
                     if self.locutus_settings.LOCUTUS_VERBOSE \
                     and self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS:
-                        print('VERBOSE: ADDING {0} to processed_ints_accession_list (len={1}) as {2}'.format(
+                        print('VERBOSE: NEW accession; ADDING {0} to processed_ints_accession_list (len={1}) as {2}'.format(
                             accession_str, len(processed_ints_accession_list), accession_int), flush=True)
+                        total_status_processsed += 1
+                        if self.locutus_settings.LOCUTUS_VERBOSE:
+                                print('VERBOSE: AND adding +1 to give total_status_processsed={0}, manifest_status={1} for accession_str={2}'.format(
+                                    total_status_processsed, manifest_status, accession_str), flush=True)
+                        # sub-counter for any PROCESSED sub-accessions from a split, i.e., with a fractional '.001', '.002', etc.
+                        if '.' in accession_str:
+                            total_status_processsed_subaccessions += 1
                 else:
                     if self.locutus_settings.LOCUTUS_VERBOSE \
                     and self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS:
-                        print('VERBOSE: already FOUND {0} in processed_ints_accession_list (len={1}) as {2}'.format(
-                            accession_str, len(processed_ints_accession_list), accession_int), flush=True)
+                        print('VERBOSE: DUPLICATE already FOUND {0} in processed_ints_accession_list (len={1}) as {2}; LEAVING total_status_processsed={3}'.format(
+                            accession_str, len(processed_ints_accession_list), accession_int, total_status_processsed), flush=True)
+                        # NOTE: but tallying up the number of duplicates seen as PROCESSED:
+                        total_status_processsed_duplicates += 1
 
             elif manifest_status.upper() == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING:
                 total_status_pending += 1
@@ -4312,12 +4318,16 @@ class DICOMSummarizeStats:
                     flush=True)
 
         # NOTE: Keeping calm and carrying on w/ ACCESSIONS WITH TEXT, courtesy of the Juneteenth 2025 alpha-numeric accessions Upgrade.
-        # As such, no more need to even show:
-        print('{0},{1},{2},{3}'.format(
+        # As such, no more need to even show (but still doing so for information & backwards compatibility)
+        alphas_removed_msg = ''
+        if total_accessions_with_text_NOT_removed > 0:
+            alphas_removed_msg = '[text no longer removed, thanks to alpha-numeric upgrade]'
+        print('{0},{1},{2},{3} {4}'.format(
                     MANIFEST_OUTPUT_PREFIX,
                     MANIFEST_HEADER_STATS_OUT,
                     total_accessions_with_text_NOT_removed,
-                    'ACCESSIONS WITH TEXT [no longer removed, thanks to alpha-numeric upgrade]'),
+                    'ACCESSIONS WITH TEXT',
+                    alphas_removed_msg),
                     flush=True)
 
         # first, a count of total duplicates encountering (noting that the first one is NOT included in this count)
@@ -4328,12 +4338,16 @@ class DICOMSummarizeStats:
                     MANIFEST_HEADER_ACCESSION_DUPLICATES),
                     flush=True)
 
-        # and, count of the internal self.locutus_settings.MANIFEST_OUTPUT_STATUS_NOT_FOUND, to follow the above missing list
-        print('{0},{1},{2},{3}'.format(
+        # and, count of the internal self.locutus_settings.MANIFEST_OUTPUT_STATUS_NOT_FOUND, to lead the below NOT_FOUND missing list
+        notfound_msg = ''
+        if total_not_found > 0:
+            notfound_msg = '(NOTE: consider running the Summarizer\'s Preloader to move these to PENDING_CHANGE)'
+        print('{0},{1},{2},{3} {4}'.format(
                     MANIFEST_OUTPUT_PREFIX,
                     MANIFEST_HEADER_STATS_OUT,
                     total_not_found,
-                    self.locutus_settings.MANIFEST_OUTPUT_STATUS_NOT_FOUND),
+                    self.locutus_settings.MANIFEST_OUTPUT_STATUS_NOT_FOUND,
+                    notfound_msg),
                     flush=True)
 
         # finally print out the ACCESSIONS NOT FOUND for diff_set after their total_not_found counts, above....
@@ -4687,19 +4701,36 @@ class DICOMSummarizeStats:
                     flush=True)
 
         # self.locutus_settings.MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_PREFIX:
-        print('{0},{1},{2},{3}[*]'.format(
+        previous_counts_msg = ''
+        if total_status_previous_processsing > 0:
+            previous_counts_msg = self.locutus_settings.MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_WARNING_VS_DYNAMIC_COUNTS
+        print('{0},{1},{2},{3}[*] {4}'.format(
                     MANIFEST_OUTPUT_PREFIX,
                     MANIFEST_HEADER_STATS_OUT,
                     total_status_previous_processsing,
-                    self.locutus_settings.MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_PREFIX),
+                    self.locutus_settings.MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_PREFIX,
+                    previous_counts_msg),
                     flush=True)
 
+        # PROCESSED.  leave it simple, no message.
         # self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED:
         print('{0},{1},{2},{3}'.format(
                     MANIFEST_OUTPUT_PREFIX,
                     MANIFEST_HEADER_STATS_OUT,
                     total_status_processsed,
                     self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED),
+                    flush=True)
+
+        # ANOTHER count of total duplicates encountered, but here ONLY those as PROCESSED (noting that the first one is NOT included in this count)
+        duplicate_counts_msg = ''
+        if total_status_processsed_duplicates > 0:
+            duplicate_counts_msg = self.locutus_settings.MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_PROCESSED_WARNING_VS_DYNAMIC_COUNTS
+        print('{0},{1},{2},{3} {4}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    MANIFEST_HEADER_STATS_OUT,
+                    total_status_processsed_duplicates,
+                    self.locutus_settings.MANIFEST_OUTPUT_STATUS_DUPLICATES_PROCESSED,
+                    duplicate_counts_msg),
                     flush=True)
 
         """
@@ -4835,9 +4866,10 @@ class DICOMSummarizeStats:
 
         # select distinct(manifest_status), count(*) as subtotals from onprem_dicom_manifest group by manifest_status;
         # Header above all automatically grouped:
-        print('{0},{1},---------------,Dynamically Grouped (to 100 chars) from the DB (which might differ from any DRYRUN/SAFEMODE mock updates):'.format(
+        print('{0},{1},---------------,Dynamically Grouped (to 100 chars) from the DB (which might differ from any {2} or DRYRUN/SAFEMODE mock updates):'.format(
                     MANIFEST_OUTPUT_PREFIX,
-                    MANIFEST_HEADER_STATS_OUT),
+                    MANIFEST_HEADER_STATS_OUT,
+                    self.locutus_settings.MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_PREFIX),
                     flush=True)
 
         manifest_summ_status_result = self.LocutusDBconnSession.execute('SELECT substring(manifest_status from 0 for 100) as trunc_manifest_status, '\
