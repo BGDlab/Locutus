@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 17 November 2025_
+_last update: 19 November 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -13,8 +13,8 @@ The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in pa
 From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automated processing workflow management system for modules and commands such as the following (as included in this reference repo):
 
     * OnPrem DICOM De-ID module
-    * DICOM Summarizer command
-
+    * DICOM Summarizer command (including the Preloader sidecar)
+    * Locutus System Status command
 
 
 ## De-ID Transform Phase
@@ -103,37 +103,41 @@ The rest of this  `README.md` will serve as a high-level overview and introducti
 
 The following sections from the Children's Hospital of Philadelphia Research Institute's internal repo are provided here for your Locutus reference, linking to excerpts from the respective modules for further detail where applicable.
 
-* [Overview of Locutus Modules](#overview-of-locutus-modules)
+* [Overview of Locutus modules](#overview-of-locutus-modules)
 * [High-Level Approach & Flow](#high_level_approach_and_flow)
     * [Historical Change-Driven Approach](#historical_change_driven_approach)
     * [Current Manifest-Driven Approach](#current_manifest_driven_approach)
     * [General Locutus Approach](#general_locutus_approach)
-    * [Approach summarized for each Locutus Module](#approach_summarized_for_each_locutus_module)
-        * [OnPrem DICOM De-ID module](#highlevel_onprem_dicoms)
-        * [DICOM Summarizer command](#highlevel_dicom_summarizer)
+    * [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
+        * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
+        * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
+			* [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader)
+		* [**Locutus System Status** command](#highlevel_locutus_system_status)
     * [Future Considerations to Approach](#highlevel_future)
 * [DBs, Vault, Configurations & Manifest Formats](#configs)
     * [General Locutus configuration](#cfg_locutus)
-    * [OnPrem DICOM De-ID module configuration](#cfg_onprem_dicoms)
-        * [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
-    * [DICOM Summarizer command configuration](#cfg_dicom_summarizer)
-        * [DICOM Summarizer command manifest](#cfg_dicom_summarizer_manifest)
+    * [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
+        * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
+    * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
+        * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
+    * r3m0: TODO: ===> add **DICOM Summarizer** Preloader cfgs+manifest
+    * r3m0: TODO: ===> add **Locutus System Status** command cfgs+manifest
 * [Deployment](#deployment)
     * [Local Deployment](#deployment_local)
     * [Jenkins-based Deployment](#deployment_jenkins)
-        * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
+        * [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 * [3rd Party Module Dependencies (in-house or not)](#3rd_party)
 * [Contact Us](#contact)
 
 
 <A NAME="overview-of-locutus-modules"></A>
-## Overview of Locutus Modules
+## Overview of Locutus modules
 
 
 High Level Program / Module | Data Type | Sources of Metadata | Functionality | Approach Details | Configuration & Manifest Info |
 ----- | ------- | ------- |  ------- | ------- | ------- |
 **General Locutus**|  _"any"_ | _"any"_ | _"any"_ | [General Locutus approach](#highlevel_locutus) | [General Locutus config](#cfg_locutus) |
-**OnPrem DICOM De-ID** (Radiology Imaging) |  DICOM Formatted objects (MRIs, X-Rays, CT scans, etc.) | Manifest, and accession information from Clinical Radiology (DICOM metadata) | for each accession # in the manifest: <br/> \* download DICOM objects from our Research PACS (Orthanc), <br/> \* de-identify DICOM on prem, <br/> \* use metadata from manifest & DICOM to define bucket key, and <br/> \* deliver to target |[OnPrem DICOM De-ID approach](#highlevel_onprem_dicoms)| [OnPrem DICOM config & manifest](#cfg_onprem_dicoms) |
+**OnPrem DICOM De-ID** (Radiology Imaging) |  DICOM Formatted objects (MRIs, X-Rays, CT scans, etc.) | Manifest, and accession information from Clinical Radiology (DICOM metadata) | for each accession # in the manifest: <br/> \* download DICOM objects from our Research PACS (Orthanc), <br/> \* de-identify DICOM on prem, <br/> \* use metadata from manifest & DICOM to define bucket key, and <br/> \* deliver to target |[**OnPrem DICOM De-ID** approach](#highlevel_onprem_dicoms)| [OnPrem DICOM config & manifest](#cfg_onprem_dicoms) |
 
 
 
@@ -147,9 +151,11 @@ where applicable, as follows:
 * [Historical Change-Driven Approach](#historical_change_driven_approach)
 * [Current Manifest-Driven Approach](#current_manifest_driven_approach)
 * [General Locutus Approach](#general_locutus_approach)
-* [Approach summarized for each Locutus Module](#approach_summarized_for_each_locutus_module)
-    * [OnPrem DICOM De-ID module](#highlevel_onprem_dicoms)
-    * [DICOM Summarizer command](#highlevel_dicom_summarizer)
+* [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
+    * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
+    * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
+		* [**DICOM Summarizer** Preloader](#highlevel_dicom_summarizer_preloader)
+	* [**Locutus System Status** command](#highlevel_locutus_system_status)
 * [Future Considerations to Approach](#highlevel_future)
 
 
@@ -204,8 +210,10 @@ along with any desired metadata which might be used during the processing
 
 Samples of expected manifest formats for each Locutus module may be found at:
 
-* [OnPrem DICOM De-ID module manifest](#cfg_onprem_dicoms_manifest)
-* [DICOM Summarizer command manifest](#cfg_dicom_summarizer_manifest)
+* [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
+* [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
+* r3m0: TODO: ==> add **DICOM Summarizer** Preloader sidecar cfgs+manifest
+* r3m0: TODO: ==> add **Locutus System Status** command cfgs+manifest
 
 With this Manifest-Driven approach, Locutus now generally utilizes
 a configuration setting of `locutus_run_mode="single"` since "continuous" polling
@@ -266,17 +274,17 @@ processing a particular input objects/file are resolved, the interim input file 
 picked up by a Phase Sweep at its respective Phase in processing, even if it is no longer listed in the input manifest.
 
 <A NAME="approach_summarized_for_each_locutus_module"></A>
-### Approach summarized for each Locutus Module Processing Phase
+### Approach Summarized for each Locutus module Processing Phase
 
 
 Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXTRACT (Download Locally) | Phase04: TRANSFORM (De-identify) | Phase05: LOAD (Upload to Target) |
 ----- | ------- | ------- | ------- | ------- | ------- |
-OnPrem DICOM De-ID:<BR/>[`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | de-identify locally using [`dicom_anon.py`](./src_3rdParty/dicom_anon.py) | upload to de-identified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip`, or local Isilon target |
+**OnPrem DICOM De-ID**:<BR/>[`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | de-identify locally using [`dicom_anon.py`](./src_3rdParty/dicom_anon.py) | upload to de-identified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip`, or local Isilon target |
 
 
 
 <A NAME="highlevel_onprem_dicoms"></A>
-### OnPrem DICOM De-ID module, additional approach details
+### **OnPrem DICOM De-ID** module, additional approach details
 
 As already shared up at the top of this reference, the **OnPrem DICOM De-ID** module's De-ID Transform Phase may generally be viewed as follows:
 
@@ -318,11 +326,24 @@ Please notice the following `dicom-anon` flags as used for the above call from t
 **PHI WARNING:** Even with using such a de-identification profile to allow DICOM metadata that is generally PHI-free, and excluding DICOM series that are more prone to PHI, such Protected Health Information can still slip through the cracks of DICOM de-identification.  This is especially true when DICOM objects are obtained from other institutions which might adhere to other practices.  For example, we have observed PHI in Series Description values as set by other institutions to include Physician or even Patient names.  The balance between (a) preventing any PHI to pass through de-identification, while (b) allowing enough DICOM metadata through de-identification to support downstream research, is an ever dynamic one, requiring vigilence and collaboration between the Locutus team and researchers.
 
 <A NAME="highlevel_dicom_summarizer"></A>
-### DICOM Summarizer command for OnPrem De-ID module
+### **DICOM Summarizer** command for OnPrem De-ID module
 
-The DICOM Summarizer is to be a module-agnostic command to view the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
+The **DICOM Summarizer** command is to offer a module-agnostic view of the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
 
-With the addition of the Preloader, a Summarizer sidecar, the manifest_status values can be updated for a batch (with a supplied suffix) in order to more easily monitor the ongoing status of a DICOM De-ID batch.
+With the addition of the Preloader, a Summarizer sidecar, the manifest_status values can be updated for a batch (with a supplied suffix) in order to more easily monitor the ongoing status of a **DICOM De-ID** batch.
+
+<A NAME="highlevel_dicom_summarizer_preloader"></A>
+#### **DICOM Summarizer** Preloader sidecar command for both GCP and OnPrem De-ID modules
+
+ASAP r3m0: TODO: ===> flesh this highlevel_dicom_summarizer_preloader out???
+
+<A NAME="highlevel_locutus_system_status"></A>
+#### **Locutus System Status** command
+
+ASAP r3m0: TODO: ===> flesh this highlevel_locutus_system_status out???  YES!
+
+Under the hood, looking at the System Status table in the Locutus DB:
+<IMG SRC="./docs/images/SystemStatus_example_table.png" />
 
 
 <A NAME="highlevel_future"></A>
@@ -384,8 +405,8 @@ The Vault-based database credentials and application configuration information, 
 where applicable, are described below for each of the following Locutus modules:
 
 * [General Locutus configuration](#cfg_locutus)
-* [OnPrem DICOM De-ID module configuration](#cfg_onprem_dicoms)
-* [DICOM Summarizer command configuration](#cfg_dicom_summarizer)
+* [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
+* [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
 
 
 NOTE: The primary Locutus configuration shall be supplied as a `./config.yaml` (once pulled from Vault),
@@ -464,7 +485,7 @@ Jenkins' LOCUTUS_DOCKERHOST_IMAGE_TAG: | "" | informational info for CFG_OUT, of
 
 
 <A NAME="cfg_onprem_dicoms"></A>
-### OnPrem DICOM De-ID module: DB, Vault, Configs, and Manifests
+### **OnPrem DICOM De-ID** module: DB, Vault, Configs, and Manifests
 
 ###### Vault-based App Config for for the upstream source OnPrem DICOM Staging
 
@@ -558,7 +579,7 @@ C333221 | Radiology | 	1234 | spine |	1235123 | REPROCESS: update da cfgs  | |
 
 
 <A NAME="cfg_dicom_summarizer"></A>
-### DICOM Summarizer command: DB, Vault, Configs, and Manifests
+### **DICOM Summarizer** command: DB, Vault, Configs, and Manifests
 
 The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** statuses within any Locutus workspace for any Locutus **DICOM De-ID** module so configured.
 
@@ -621,7 +642,7 @@ Aspects of Locutus deployment locally, or via Jenkins, are discussed briefly in 
 
 * [Local Deployment](#deployment_local)
 * [Jenkins-based Deployment](#deployment_jenkins)
-    * [deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
+    * [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 
 
 <A NAME="deployment_local"></A>
