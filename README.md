@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 19 November 2025_
+_last update: 09 December 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -120,8 +120,9 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
         * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
     * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
         * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
-    * r3m0: TODO: ===> add **DICOM Summarizer** Preloader cfgs+manifest
-    * r3m0: TODO: ===> add **Locutus System Status** command cfgs+manifest
+    * r3m0: TODO: ===> add **DICOM Summarizer** Preloader sidecar configuration
+        * r3m0: TODO: ===> add **DICOM Summarizer** Preloader sidecar manifest
+	* [**Locutus System Status** command configuration](#cfg_system_status)
 * [Deployment](#deployment)
     * [Local Deployment](#deployment_local)
     * [Jenkins-based Deployment](#deployment_jenkins)
@@ -212,8 +213,8 @@ Samples of expected manifest formats for each Locutus module may be found at:
 
 * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
 * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
-* r3m0: TODO: ==> add **DICOM Summarizer** Preloader sidecar cfgs+manifest
-* r3m0: TODO: ==> add **Locutus System Status** command cfgs+manifest
+* r3m0: TODO: ===> add [**DICOM Summarizer** Preloader sidecar manifest](#cfg_dicom_preloader_manifest)
+
 
 With this Manifest-Driven approach, Locutus now generally utilizes
 a configuration setting of `locutus_run_mode="single"` since "continuous" polling
@@ -340,10 +341,109 @@ ASAP r3m0: TODO: ===> flesh this highlevel_dicom_summarizer_preloader out???
 <A NAME="highlevel_locutus_system_status"></A>
 #### **Locutus System Status** command
 
-ASAP r3m0: TODO: ===> flesh this highlevel_locutus_system_status out???  YES!
+The **Locutus System Status** command has two modes:
+* **Getter** mode (default), to query (_only_) the existing `active` status of the specified request type.
+* **Setter** mode, to _update_ the `active` status of the specified request type, as below.
 
-Under the hood, looking at the System Status table in the Locutus DB:
+The **Setter** mode can be activated with the following settings:
+*  `locutus_set_system_status=true` (otherwise, it is officially in the **Getter** mode)
+*  `locutus_use_system_status_enable_db_updates=true` (otherwise, it is a read-only **Setter**, effectively just the **Getter** with some extra messages claiming as such)
+
+
+Either of the above two **Locutus System Status** command modes (**Getter** _or_ **Setter**) may be applied to one of the following different request types:
+* **overall**: the _entire_ **Locutus System Status** (regardless of module or node)
+* **module**: a specific module, any of `DICOM_GCP`,  `DICOM_OnPrem`, or even `main_Locutus` (with results of the latter being similar to **overall**)
+* **node**: a specific node, such as for when experiencing downtime (planned or otherwise)
+
+
+Looking under the hood at the System Status table in the Locutus DB, the various system status types can be seen from `_overall`, to some `_per_module`, and even some `_pernode` active status values:
+
 <IMG SRC="./docs/images/SystemStatus_example_table.png" />
+
+
+##### Sample configs for **Getter** mode:
+
+A sample set of config settings for the **Getter** for the Overall System Status:
+```
+process_locutus_system_status: True
+locutus_set_system_status: False
+locutus_system_status_enable_db_updates: False
+locutus_use_system_status_module: False
+locutus_use_system_status_node: False
+```
+
+A sample set of config settings for the **Getter** for the **OnPrem DICOM De-ID** module:
+```
+process_locutus_system_status: True
+locutus_set_system_status: False
+locutus_system_status_enable_db_updates: False
+locutus_use_system_status_module: True
+locutus_use_system_status_module_name: DICOM_OnPrem
+locutus_use_system_status_node: False
+```
+
+A sample set of config settings for the **Getter** for the `gandalf` node:
+```
+process_locutus_system_status: True
+locutus_set_system_status: False
+locutus_system_status_enable_db_updates: False
+locutus_use_system_status_module: False
+locutus_use_system_status_node: True
+locutus_use_system_status_node_name: gandalf
+```
+
+##### Sample configs for **Setter** mode:
+
+A sample set of config settings for the **Setter** for the Overall System Status, to set to `False`:
+```
+process_locutus_system_status: True
+locutus_set_system_status: True
+locutus_system_status_enable_db_updates: True
+locutus_use_system_status_module: False
+locutus_use_system_status_node: False
+locutus_set_system_status_to_value: False
+```
+
+A sample set of config settings for the **Setter** for the Overall System Status, to set to `True`:
+```
+process_locutus_system_status: True
+locutus_set_system_status: True
+locutus_system_status_enable_db_updates: True
+locutus_use_system_status_module: False
+locutus_use_system_status_node: False
+locutus_set_system_status_to_value: True
+```
+
+A sample set of config settings for the **Setter** for the **OnPrem DICOM De-ID** module to `True`:
+```
+process_locutus_system_status: True
+locutus_set_system_status: True
+locutus_system_status_enable_db_updates: True
+locutus_use_system_status_module: True
+locutus_use_system_status_module_name: DICOM_OnPrem
+locutus_set_system_status_to_value: True
+locutus_use_system_status_node: False
+```
+
+A sample set of config settings for the **Setter** for the `gandalf` node to `True`:
+```
+process_locutus_system_status: True
+locutus_set_system_status: True
+locutus_system_status_enable_db_updates: True
+locutus_use_system_status_module: False
+locutus_use_system_status_node: True
+locutus_use_system_status_node_name: gandalf
+locutus_set_system_status_to_value: True
+```
+
+**PRO TIP:** any Locutus **DICOM De-ID** batches that were (hopefully _gracefully_) halted with any such **Locutus System Status** disabling may be re-deployed to de-identify outstanding accessions:
+
+* if `force_reprocess = False` for the interrupted run, _and_ can remain so when re-deploying:
+	* the same manifest may be re-used and all previously PROCESSED accessions will be skipped.  Any other accessions received from Radiology (i.e., not PENDING_CHANGE), but not yet PROCESSED, will run through the de-identification workflow, Accessions with a mid-processing ERROR (whether due to a more abrupt halt, or otherwise) will likewise be run through the de-identification workflow by the Phase Sweep component, so long as `disable_phase_sweep = False`
+* if `force_reprocess = True` for the interrupted run, and/or must be set when re-deploying:
+	* a sub-set of the full manifest may be created by running the  [**DICOM Summarizer** command](#highlevel_dicom_summarizer) and filtering _out_ those accessions already PROCESSED.
+
+
 
 
 <A NAME="highlevel_future"></A>
@@ -407,6 +507,9 @@ where applicable, are described below for each of the following Locutus modules:
 * [General Locutus configuration](#cfg_locutus)
 * [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
 * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
+* r3m0: TODO: ===> add [**DICOM Summarizer** Preloader sidecar configuration](#cfg_dicom_preloader)
+	* r3m0: TODO: ===> add [**DICOM Summarizer** Preloader sidecar manifest](#cfg_dicom_preloader_manifest)
+* [**Locutus System Status** command configuration](#cfg_system_status)
 
 
 NOTE: The primary Locutus configuration shall be supplied as a `./config.yaml` (once pulled from Vault),
@@ -513,7 +616,7 @@ user
 ```
 
 
-###### OnPrem-DICOM-DeID module-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
+###### **OnPrem-DICOM-DeID** module-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
 
 configuration key | sample default value | description |
 ---- | ---- | ---- |
@@ -585,7 +688,7 @@ The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** st
 
 
 
-###### DICOM-Summarizer command-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
+###### **DICOM-Summarizer** command-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
 
 configuration key | sample default value | description |
 ---- | ---- | ---- |
@@ -619,6 +722,25 @@ C333221 | Radiology | 	1111 | spine |	1235008 | | |
 C333221 | Radiology | 	1122 | spine |	1235015 | | |
 C333221 | Radiology | 	1234 | spine |	1235112 | | |
 C333221 | Radiology | 	1234 | spine |	1235123 | | |
+
+<A NAME="cfg_system_status"></A>
+#### **Locutus System Status** command configuration
+
+The **Locutus System Status** command can be used to get or set the Locutus system statuses `overall`, per `module`, or even per `node`, as per the configured request type.
+
+
+###### **Locutus System Status**-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
+
+configuration key | sample default value | description |
+---- | ---- | ---- |
+process_locutus_system_status: | False | use "True" for Locutus to run this command;<BR/>may be overriden by environment variable: `process_locutus_system_status` |
+locutus_use_system_status_node: | False | use "True" for Locutus to specify a particular node, or leave both this and `use_system_status_module` as "False" for `overall` status ;<BR/>may be overriden by environment variable: `locutus_use_system_status_node` |
+locutus_use_system_status_node_name: | "default" | the node for system status, if `locutus_use_system_status_node` is  "True"  ;<BR/>may be overriden by environment variable: `locutus_use_system_status_node_name` |
+locutus_use_system_status_module: | False | use "True" for Locutus to specify a particular module, or leave both this and `locutus_use_system_status_node` as "False" for `overall` status ;<BR/>may be overriden by environment variable: `locutus_use_system_status_module` |
+locutus_use_system_status_module_name: | "default" | the node for system status, if `locutus_use_system_status_module` is  "True"  ;<BR/>may be overriden by environment variable: `locutus_use_system_status_module_name` |
+locutus_set_system_status: | False | if  "True", enable **Setter** mode for the specified request type (overall, node, or module), otherwise using default **Getter** mode  ;<BR/>may be overriden by environment variable: `locutus_set_system_status` |
+locutus_set_system_status_to_value: | False | when `locutus_set_system_status_to_value` is "True", this is the value to to which the status for the specified request type (`overall`, `node`, or `module`) will actually be set ("False" to disable, "True" to enable)  ;<BR/>may be overriden by environment variable: `locutus_set_system_status_to_value` |
+locutus_system_status_enable_db_updates: | False | when `locutus_set_system_status_to_value` is "True", use "True" to allow the **Setter** mode to actually Set the status (otherwise, in a "dry run", effectively still a **Getter** mode) for the specified request type (`overall`, `node`, or `module`);<BR/>may be overriden by environment variable: `locutus_system_status_enable_db_updates` |
 
 
 
