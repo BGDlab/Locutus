@@ -111,7 +111,6 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
     * [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
         * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
         * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
-			* [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader)
 		* [**Locutus System Status** command](#highlevel_locutus_system_status)
     * [Future Considerations to Approach](#highlevel_future)
 * [DBs, Vault, Configurations & Manifest Formats](#configs)
@@ -120,8 +119,6 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
         * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
     * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
         * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
-    * r3m0: TODO: ===> add **DICOM Summarizer** Preloader sidecar configuration
-        * r3m0: TODO: ===> add **DICOM Summarizer** Preloader sidecar manifest
 	* [**Locutus System Status** command configuration](#cfg_system_status)
 * [Deployment](#deployment)
     * [Local Deployment](#deployment_local)
@@ -155,7 +152,6 @@ where applicable, as follows:
 * [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
     * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
     * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
-		* [**DICOM Summarizer** Preloader](#highlevel_dicom_summarizer_preloader)
 	* [**Locutus System Status** command](#highlevel_locutus_system_status)
 * [Future Considerations to Approach](#highlevel_future)
 
@@ -213,7 +209,6 @@ Samples of expected manifest formats for each Locutus module may be found at:
 
 * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
 * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
-* r3m0: TODO: ===> add [**DICOM Summarizer** Preloader sidecar manifest](#cfg_dicom_preloader_manifest)
 
 
 With this Manifest-Driven approach, Locutus now generally utilizes
@@ -333,10 +328,6 @@ The **DICOM Summarizer** command is to offer a module-agnostic view of the overa
 
 With the addition of the Preloader, a Summarizer sidecar, the manifest_status values can be updated for a batch (with a supplied suffix) in order to more easily monitor the ongoing status of a **DICOM De-ID** batch.
 
-<A NAME="highlevel_dicom_summarizer_preloader"></A>
-#### **DICOM Summarizer** Preloader sidecar command for both GCP and OnPrem De-ID modules
-
-ASAP r3m0: TODO: ===> flesh this highlevel_dicom_summarizer_preloader out???
 
 <A NAME="highlevel_locutus_system_status"></A>
 #### **Locutus System Status** command
@@ -507,8 +498,6 @@ where applicable, are described below for each of the following Locutus modules:
 * [General Locutus configuration](#cfg_locutus)
 * [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
 * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
-* r3m0: TODO: ===> add [**DICOM Summarizer** Preloader sidecar configuration](#cfg_dicom_preloader)
-	* r3m0: TODO: ===> add [**DICOM Summarizer** Preloader sidecar manifest](#cfg_dicom_preloader_manifest)
 * [**Locutus System Status** command configuration](#cfg_system_status)
 
 
