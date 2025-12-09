@@ -627,6 +627,60 @@ locutus_onprem_dicom_use_manifest_QC_status_if_fail_remove_study_from_deidqc: | 
 locutus_onprem_dicom_subject_ID_preface: | | use any value as a preface to the subject_ID, typically to temporarily help group studies within a manual DeID QC Orthanc; NOTE: will NOT be applied with a qc_status of PASS:* to reprocess, since wanting no such prefaces for the final de-id data |
 <A NAME="cfg_onprem_dicoms_manifest"></A>
 
+###### Sample config.yaml for **OnPrem-DICOM-DeID** module:
+
+```
+# sample Locutus config.yaml configuration File for an OnPrem DICOM De-ID module deployment
+
+###################################################
+# general Locutus settings:
+#
+locutus_run_mode: single
+#
+# even in single run mode, convergence feature allows for multiple attempts:
+locutus_dicom_run_mode_continue_to_manifest_convergence: True
+locutus_continuous_wait_secs: 45
+#
+# Locutus DB, nested in another Vault-based config:
+locutus_DB_vault_path: vault/path/databases/locutus
+#
+# Locutus Workspaces:
+locutus_workspaces_enable: True
+locutus_workspace_name: project01
+#
+# Locutus targets:
+locutus_target_use_isilon:    True
+locutus_target_isilon_path:   /mount/point/imaging/locutus_output/onprem/dicom_deids
+locutus_debug_keep_interim_files: False
+#
+# force_success allows Locutus to carry on with the rest of the input manifest, for all but the most fatal of errors:
+locutus_force_success: True
+#
+# force_reprocess to attempt re-processing of  previously processed accessions:
+locutus_debug_onprem_dicom_force_reprocess_accession_status: False
+#
+locutus_verbose: False
+locutus_disable_phase_sweep: False
+###################################################
+
+
+###################################################
+# OnPrem DICOM DE-ID module specific settings:
+#
+process_onprem_dicom_images: True
+locutus_onprem_dicom_input_manifest_csv: onprem_dicom_images_manifest.csv
+#
+# Stager for Research PACS, nested in another Vault-based config:
+onprem_dicom_stage_config_vault_path: vault/path/stager/production
+#
+# OnPrem interim processing directories:
+locutus_onprem_dicom_zip_dir:          /mount/point/imaging/locutus_interim_processing/onprem/phase03_orthanc_ids
+locutus_onprem_dicom_deidentified_dir: /mount/point/imaging/locutus_interim_processing/onprem/phase04_dicom_deids
+#
+###################################################
+```
+
+
 ###### Sample of expected manifest format for <U>onprem_dicom_images_manifest.csv</U>, with `locutus_onprem_dicom_use_manifest_QC_status=False`:
 
 SUBJECT_ID | imaging_type | age_at_imaging_(days) | anatomical_position | ACCESSION_NUM | DEID_QC_STATUS | locutus_manifest_ver:locutus.onprem_dicom_deid_qc.2021march15 |
@@ -691,6 +745,52 @@ dicom_summarize_stats_enable_db_updates: | False | set to True to enable Summari
 dicom_summarize_stats_preload_new_accessions_per_manifest: | False | set to True to run the Summarizer's status-aware Preloader sidecar, allowing updates according to the manifest_status for each accession prior to processing |
 dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: |  'summarizerPreLoaded' | custom suffix, such as 'batch123' to follow the initial preload status, e.g. `ZZZ-ONDECK-4-PROCESSING:batch1234` |
 locutus_debug_onprem_dicom_force_reprocess_accession_status: | False | set to True when using module=`OnPrem` for Preloader sidecar to include options such as `ZZZ-ONDECK-4-RE-PROCESSING:batch1234`, if already `PROCESSED` (otherwise, won't even Preload since nothing more to do) |
+
+
+###### Sample config.yaml for **DICOM-Summarizer** command of the **OnPrem-DICOM-DeID** module:
+
+```
+# sample Locutus config.yaml configuration File for a DICOM Summarizer module deployment for the OnPrem module
+
+###################################################
+# general Locutus settings:
+#
+locutus_run_mode: single
+#
+# Locutus DB, nested in another Vault-based config:
+locutus_DB_vault_path: vault/path/databases/locutus
+#
+# Locutus Workspaces:
+locutus_workspaces_enable: True
+locutus_workspace_name: project01
+#
+locutus_verbose: False
+###################################################
+
+
+###################################################
+# DICOM Summarizer command (for OnPrem DICOM De-ID module) specific settings:
+#
+process_dicom_summarize_stats: True
+dicom_summarize_stats_module: ONPREM
+dicom_summarize_stats_manifest_csv: dicom_summarize_stats_manifest.csv
+#
+# Show Accessions: (disable to show only the summarized stats)
+dicom_summarize_stats_show_accessions: True
+#
+# Redact Accessions: (enable to exclude accession numbers from the Summarizer output)
+dicom_summarize_stats_redact_accessions: False
+
+# for Summarizer Preloader sidecar:
+#
+dicom_summarize_stats_preload_new_accessions_per_manifest: False
+dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: 'batch123'
+#
+# and enable_db, normally False except for actual Preloads (otherwise merely a dry run Preload):
+dicom_summarize_stats_enable_db_updates: False
+#
+###################################################
+```
 
 
 <A NAME="cfg_dicom_summarizer_manifest"></A>
