@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 10 November 2025_
+_last update: 11 December 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -95,6 +95,7 @@ SOFTWARE.
 <BR/>
 
 ----------------------------------------------------------------
+
 <A NAME="for_more_detailed_dox"></A>
 ## FOR MORE DETAILS...
 
@@ -102,6 +103,18 @@ SOFTWARE.
 Detailed documentation and excerpts from the Children's Hospital of Philadelphia Research Institute internal repo for Locutus may be found in this `reference` branch of this BGD Lab repository, at:
 * https://github.com/BGDlab/Locutus/tree/reference#detailed_dox
 
+----------------------------------------------------------------
+
+<A NAME="amia_summit_2025"></A>
+## Please cite Locutus paper from AMIA Informatics Summit 2025
+
+We are proud to to share with you our Locutus paper as presented at the American Medical Informatics Association's [AMIA Informatics Summit 2025](https://amia.org/education-events/amia-2025-informatics-summit):
+
+* [**From Scanner to Science**: Reusing Clinically Acquired Medical Images for Research](docs/images/FromScannerToScience_viaAMIAKnowledgeCenter_asof2025april10.pdf)
+
+If you find value in Locutus and its usefulness in progressing your own research, and are writing a paper of your own on the resulting de-identified data, we kindly ask that you please cite the Locutus [AMIA Informatics Summit 2025](https://amia.org/education-events/amia-2025-informatics-summit) podium presentation paper as follows:
+
+> _Schabdach J, Williams RMS, Logan J, Padmanabhan V, D'Aiello III R, Mclaughlin J, Gonzalez A, Krause E, Tasian G, Sotardi S, Alexander-Bloch A. **From Scanner to Science: Reusing Clinically Acquired Medical Images for Research**. AMIA Informatics Summit Proceedings 2025:471-480._
 
 
 ----------------------------------------------------------------
