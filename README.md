@@ -125,6 +125,7 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
     * [Jenkins-based Deployment](#deployment_jenkins)
         * [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 * [3rd Party Module Dependencies (in-house or not)](#3rd_party)
+* [Please cite Locutus paper from AMIA Informatics Summit 2025](#amia_summit_2025)
 * [Contact Us](#contact)
 
 
@@ -934,6 +935,19 @@ In addition to the various infrastructure needs mentioned above in  [Local Deplo
    
 
    * related local doc [the README for dicom-anon](./docs/README_dicom-anon.md)
+
+
+<A NAME="amia_summit_2025"></A>
+## Please cite Locutus paper from AMIA Informatics Summit 2025
+
+We are proud to to share with you our Locutus paper as presented at the American Medical Informatics Association's [AMIA Informatics Summit 2025](https://amia.org/education-events/amia-2025-informatics-summit):
+
+* [**From Scanner to Science**: Reusing Clinically Acquired Medical Images for Research](docs/images/FromScannerToScience_viaAMIAKnowledgeCenter_asof2025april10.pdf)
+
+If you find value in Locutus and its usefulness in progressing your own research, and are writing a paper of your own on the resulting de-identified data, we kindly ask that you please cite the Locutus [AMIA Informatics Summit 2025](https://amia.org/education-events/amia-2025-informatics-summit) podium presentation paper as follows:
+
+> _Schabdach J, Williams RMS, Logan J, Padmanabhan V, D'Aiello III R, Mclaughlin J, Gonzalez A, Krause E, Tasian G, Sotardi S, Alexander-Bloch A. **From Scanner to Science: Reusing Clinically Acquired Medical Images for Research**. AMIA Informatics Summit Proceedings 2025:471-480._
+
 
 <A NAME="contact"></A>
 ## Contact Us
