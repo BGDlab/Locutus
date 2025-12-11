@@ -5005,7 +5005,7 @@ class OnPrem_Dicom:
         #
         ###########
 
-        this_fatal_errors = False
+        this_run_has_fatal_errors = False
         total_errors_encountered = 0
         total_accessions_with_text_removed = 0
         total_accessions_processed_successfully = 0
@@ -5343,6 +5343,33 @@ class OnPrem_Dicom:
                                     'last_datetime_processed timestamp without time zone, '\
                                     'manifest_status text '\
                                     ');'.format(LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE))
+
+        # NOTE: Migration Safety Check Stop Gap for staged accessions w/ unanticipated NULL active flag:
+        num_null_active_staged = 0
+        null_active_staged_changes_result =  self.StagerDBconnSession.execute('SELECT COUNT(*) AS num_nulls'\
+                                                                    '  FROM {0} '\
+                                                                    '  WHERE active IS NULL'.format(
+                                                                    STAGER_STABLESTUDY_TABLE))
+        null_active_staged_changes_row = null_active_staged_changes_result.fetchone()
+        num_null_active_staged = null_active_staged_changes_row['num_nulls']
+
+        if num_null_active_staged > 0:
+            print('{0}.Process(): PHASE01: WARNING: {1} Staged accessions found with active=NULL;  '\
+                    'enabling LOCUTUS_DICOM_BYPASS_MIGRATION for this run... '\
+                    'Please resolve Stager NULLs to re-activate this Migrator.'.format(
+                    CLASS_PRINTNAME, num_null_active_staged),
+                    flush=True)
+            self.locutus_settings.LOCUTUS_DICOM_BYPASS_MIGRATION = True
+        else:
+            print('{0}.Process(): PHASE01: INFO: Absolutely NO ({1}) unanticipated Staged accessions found with active=NULL; leaving LOCUTUS_DICOM_BYPASS_MIGRATION as is, YAY.'.format(
+                    CLASS_PRINTNAME, num_null_active_staged),
+                    flush=True)
+        # emit the Phase01 MIGRATION STATS:
+        print('{0},# Phase01,NUM_STAGED_WITH_NULL_ACTIVE_TO_RESOLVE:,{1},from,{2}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    num_null_active_staged,
+                    STAGER_STABLESTUDY_TABLE),
+                    flush=True)
 
         if self.locutus_settings.LOCUTUS_DICOM_BYPASS_MIGRATION:
             print('{0}.Process(): PHASE01a: INFO: LOCUTUS_DICOM_BYPASS_MIGRATION bypassing pre-Migration zombie removals.'.format(
@@ -5972,7 +5999,7 @@ class OnPrem_Dicom:
 
         last_accession_str = ''
         num_attempts_same_accession = 0
-        while (not this_fatal_errors) and (not manifest_done) \
+        while (not this_run_has_fatal_errors) and (not manifest_done) \
             and (num_attempts_same_accession < MAX_SAME_ACCESSION_ATTEMPTS):
             if not processed_uuids_in_this_phase:
                 print('{0}.Process(): START of PHASE03: phase processing this batch...'.format(CLASS_PRINTNAME), flush=True)
@@ -7715,6 +7742,28 @@ class OnPrem_Dicom:
             nowtime = datetime.datetime.utcnow()
             print('@ {0} UTC: END of PHASE03 batch'.format(nowtime), flush=True)
             print('{0}.Process(): END of PHASE03: phase processing complete for this batch.'.format(CLASS_PRINTNAME), flush=True)
+        elif not processed_uuids_in_this_phase and num_null_active_staged > 0:
+            # NOTE: no UUIDs processed in the above Phase03 from the manifest itself (prior to Phase Sweeps)
+            # but accessions exist in the Stager DB with active=NULL which would have led to a bypassed Migrator.
+            # Since no manifest-based UUIDs, assume the input manifest to be an accession-less "NOOP" one,
+            # and force a FAIL for the inferred Migrator run:
+            ####
+            run_loop = False
+            print('FATAL ERROR: Locutus {0} encountered {1} Staged accessions found with active=NULL '\
+                    'for a Migrator-only run (w/ an accession-less NOOP manifest); '\
+                    'FAILING,  to escalate alert of such Stager NULL actives needing resolution ASAP.'.format(
+                    CLASS_PRINTNAME, num_null_active_staged), flush=True)
+            # bail w/ this_run_has_fatal_errors:
+            this_run_has_fatal_errors = True
+            total_errors_encountered += 1
+            # NOTE: no need to thrown an exception, as this will suffice for a Jenkins FAIL of the Migrator-specific deployments
+
+            # as well as the less ominous manifest_done, for completeness:
+            manifest_done = True
+
+            # Further, ensure that phase sweeps don't get picked up:
+            self.locutus_settings.LOCUTUS_DISABLE_PHASE_SWEEP = True
+            ###########
 
         if not self.locutus_settings.LOCUTUS_DISABLE_PHASE_SWEEP:
             # PHASE_SWEEP: Processing Phase04:
@@ -8245,5 +8294,5 @@ class OnPrem_Dicom:
             print('{0}.Process() says Goodbye'.format(CLASS_PRINTNAME), flush=True)
         # WAS: return total_errors_encountered
         # r3m0: UPDATING for convergence:
-        return (this_fatal_errors, total_errors_encountered, total_accessions_processed_successfully)
+        return (this_run_has_fatal_errors, total_errors_encountered, total_accessions_processed_successfully)
         # end of Process()

@@ -13,9 +13,7 @@ import datetime
 APP_NAME = 'Locutus'
 # NOTE: just found more to do with: APP_VERSION = '2025.06.13at0717=enhance_deploy_scripts_to_use_cmdline_args_for_manifest_and_suffix'
 # BUT FIRST....
-#APP_VERSION = '2025.07.03at0751_enhance_accession_num_2B_alpha-numeric'
-# AND THEN:
-APP_VERSION = '2025.11.25at0703_Summarizer_fix_do_not_increment_PROCESSED_Counter_for_DUPLICATES_and_PreviousProcessingUsed'
+APP_VERSION = '2025.12.11at1053_Migrator_SafetyCheck_for_NULL_active_Staged_addMigratorModeFAIL'
 
 # BEWARE of Code Smells all throughout Locutus; so sorry about that, fellow developers.
 # Locutus is most definitely long overdue for a refactoring to clean up some of those smells.

@@ -1074,6 +1074,7 @@ def main(args):
                             'single-shot mode.',
                             flush=True)
             run_loop = False
+            num_errs_total += num_errs_this_run
         ##############
         # else:  TODO: introduce a default else for any other unrecognized RUN_MODEs, terminating
         ##############
