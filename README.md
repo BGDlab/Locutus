@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 09 December 2025_
+_last update: 12 December 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -111,6 +111,7 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
     * [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
         * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
         * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
+			* [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader)
 		* [**Locutus System Status** command](#highlevel_locutus_system_status)
     * [Future Considerations to Approach](#highlevel_future)
 * [DBs, Vault, Configurations & Manifest Formats](#configs)
@@ -119,6 +120,8 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
         * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
     * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
         * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
+    * [**DICOM Summarizer** Preloader sidecar configuration]((#cfg_dicom_preloader))
+        * [**DICOM Summarizer** Preloader sidecar manifest](cfg_dicom_preloader_manifest)
 	* [**Locutus System Status** command configuration](#cfg_system_status)
 * [Deployment](#deployment)
     * [Local Deployment](#deployment_local)
@@ -153,6 +156,7 @@ where applicable, as follows:
 * [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
     * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
     * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
+		* [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader)
 	* [**Locutus System Status** command](#highlevel_locutus_system_status)
 * [Future Considerations to Approach](#highlevel_future)
 
@@ -210,6 +214,7 @@ Samples of expected manifest formats for each Locutus module may be found at:
 
 * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
 * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
+* [**DICOM Summarizer** Preloader sidecar manifest](#cfg_dicom_preloader_manifest)
 
 
 With this Manifest-Driven approach, Locutus now generally utilizes
@@ -327,7 +332,64 @@ Please notice the following `dicom-anon` flags as used for the above call from t
 
 The **DICOM Summarizer** command is to offer a module-agnostic view of the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
 
-With the addition of the Preloader, a Summarizer sidecar, the manifest_status values can be updated for a batch (with a supplied suffix) in order to more easily monitor the ongoing status of a **DICOM De-ID** batch.
+Typical `manifest_status` values shown for each accession in a batch manifest might include:
+
+* **NOT_FOUND**: no record yet exists the **Locutus MANIFEST** table (until Preloaded or De-ID'd).
+* **PENDING_CHANGE**: record does exist in the **Locutus MANIFEST** table, but not yet in the **Locutus STATUS** table, as not yet Migrated from (or even in) the Stager DB.
+* **ERROR_***: an error occurred mid-processing.  Enable Phase Sweep with re-De-ID to retry at current phase, or Force Reprocess to restart processing.
+* **ERROR_MULTIPLE_CHANGE_UUIDS**: multiple distinct UUIDs found from the Stager DB.
+* **PROCESSED**: De-ID complete, with same accession attributes as current batch manifest.
+* **PROCESSED_PREVIOUSLY_USING_***: De-ID completed previously, but with accession attributes that differ from those in the current batch manifest.
+* **PROCESSING_CHANGE_at_***: Either an active indication of the processing phase for a current De-ID run, or a zombie status from a formerly halted De-ID run. Enable Phase Sweep with re-De-ID to retry at current phase, or Force Reprocess to restart processing.
+
+Further `manifest_status` values are available through use of the [**DICOM Summarizer** Preloader sidecar]("#highlevel_dicom_summarizer_preloader").
+
+
+
+<A NAME="highlevel_dicom_summarizer_preloader"></A>
+#### **DICOM Summarizer** Preloader sidecar for the OnPrem De-ID module
+
+While the standard [**DICOM Summarizer** command]("#highlevel_dicom_summarizer_preloader") will merely present a passive view of the current `manifest_status` for each accession in its input manifest (including status of `NOT_FOUND` when no corresponding **Locutus MANIFEST** record is yet found), the **DICOM Summarizer** Preloader sidecar is much more active.
+
+To streamline monitoring ongoing statuses **DICOM De-ID** batches,
+the **DICOM Summarizer** Preloader sidecar dynamically updates the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
+informed by that workspace's active accession records in the **Locutus STATUS** table (as most recently Migrated from the Stager DB), and appended with a _preload_suffix_.
+
+In addition to those `manifest_status` values described in the above [**DICOM Summarizer** command]("#highlevel_dicom_summarizer"), the **DICOM Summarizer** Preloader sidecar also generates the following `manifest_status`:
+
+* **ZZZ-ONDECK-PENDING_CHANGE**:_preload_suffix_
+* **ZZZ-ONDECK-4-PROCESSING_CHANGE**:_preload_suffix_
+* **ZZZ-ONDECK-4-RE-PROCESSING_CHANGE**:_preload_suffix_
+* **ZZZ-ONDECK-2-RESOLVE-ERROR_MULTIPLE_CHANGE_UUIDS**:_preload_suffix_
+
+The **DICOM Summarizer** Preloader sidecar also references the current setting for ...
+
+* `locutus_debug_onprem_dicom_force_reprocess_accession_status` (with `dicom_summarize_stats_module='OnPrem'`, for the **OnPrem DICOM De-ID** module)
+
+... in order to determine if an already-**PROCESSED** accessions shall be Preloaded as **ZZZ-ONDECK-*** for **RE-PROCESSING** (with `force_reprocess`=True) or left as **PROCESSED** (with `force_reprocess`=False).
+
+**PRO TIP:** Preloading a Locutus **DICOM De-ID** batch allows for easy ad-hoc SQL queries that may be performed directly on the **Locutus MANIFEST** table.  These are especially fun while mid-processing multiple concurrent Locutus batches, reducing the need for calls to the full **DICOM Summarizer** command.
+
+An example of one such SQL query follows:
+
+```
+locutus_db=# SELECT manifest_status, MIN(last_datetime_processing), MAX(last_datetie_processing), COUNT(*) FROM onprem_dicom_ws_PROJECT123_manifest WHERE last_datetime_processing >= `2025-11-20` GROUP BY manifest_status ORDER BY manifest_status;
+
+                               manifest_status                        |            min             |            max             | count
+-------------------------------------------------------------------+----------------------------+----------------------------+-------
+ PROCESSED                                                         | 2025-11-20 14:34:24.132764 | 2025-12-09 14:26:48.32239  |  1601
+ PROCESSING_CHANGE_at_PHASE03c_Downloading_from_Orthanc            | 2025-11-20 14:35:53.072866 | 2025-11-20 14:36:55.957974 |     2
+ PROCESSING_CHANGE_at_PHASE04a_DeIDing_with_dicom-anon             | 2025-11-20 14:36:09.221297 | 2025-11-20 14:36:57.050756 |     6
+ ZZZ-ONDECK-2-RESOLVE-ERROR_MULTIPLE_CHANGE_UUIDS:SCIT1640-batch01 | 2025-11-21 10:15:20.125422 | 2025-11-21 10:15:40.111435 |    94
+ ZZZ-ONDECK-2-RESOLVE-ERROR_MULTIPLE_CHANGE_UUIDS:scit605-batch25  | 2025-12-08 14:43:27.71766  | 2025-12-08 14:44:24.823247 |    62
+ ZZZ-ONDECK-PENDING_CHANGE:SCIT1640-batch01                        | 2025-11-21 10:15:20.217084 | 2025-11-21 10:15:40.612305 |    63
+ ZZZ-ONDECK-PENDING_CHANGE:scit605-batch25                         | 2025-12-08 14:43:27.759736 | 2025-12-08 14:44:23.921358 |   102
+(7 rows)
+```
+
+- - -
+r3m0: TODO: ====> add the following underlines between EACH section, yeah? tangent.
+- - -
 
 
 <A NAME="highlevel_locutus_system_status"></A>
@@ -344,7 +406,7 @@ The **Setter** mode can be activated with the following settings:
 
 Either of the above two **Locutus System Status** command modes (**Getter** _or_ **Setter**) may be applied to one of the following different request types:
 * **overall**: the _entire_ **Locutus System Status** (regardless of module or node)
-* **module**: a specific module, any of `DICOM_GCP`,  `DICOM_OnPrem`, or even `main_Locutus` (with results of the latter being similar to **overall**)
+* **module**: a specific module such as  `DICOM_OnPrem`, or even `main_Locutus` (with results of the latter being similar to **overall**)
 * **node**: a specific node, such as for when experiencing downtime (planned or otherwise)
 
 
@@ -499,6 +561,8 @@ where applicable, are described below for each of the following Locutus modules:
 * [General Locutus configuration](#cfg_locutus)
 * [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
 * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
+* [**DICOM Summarizer** Preloader sidecar configuration](#cfg_dicom_preloader)
+	* [**DICOM Summarizer** Preloader sidecar manifest](#cfg_dicom_preloader_manifest)
 * [**Locutus System Status** command configuration](#cfg_system_status)
 
 
@@ -547,10 +611,10 @@ configuration key | sample default value | description |
 ---- | ---- | ---- |
 locutus_target_use_isilon:     | False | if "True", use a destination on a mounted CHOP RIS isilon drive |
 locutus_target_isilon_path:     | "" | target destination mount point on the CHOP RIS isilon drive |
-locutus_target_use_s3:     | False | if "True", use a destination bucket on CHOP's Managed AWS s3 |
+locutus_target_use_s3:     | False | if "True", use a destination bucket on a Managed AWS s3 |
 locutus_target_s3_bucket:     | chop-dbhi-eig-locutus | destination bucket for uploads into CHOP's Managed AWS s3 |
-locutus_target_use_gs:     | False | if "True", use a destination bucket on CHOP's Managed GCP GS |
-locutus_target_gs_bucket:     | dicom-alpha-bucket | destination bucket for uploads into CHOP's Managed GCP GS |
+locutus_target_use_gs:     | False | if "True", use a destination bucket on a Managed GCP GS |
+locutus_target_gs_bucket:     | dicom-alpha-bucket | destination bucket for uploads into a Managed GCP GS |
 locutus_DB_vault_path: | namespace:/rootpath/databases/locutus | Vault path to Locutus DB credentials |
 locutus_DB_use_dev_suffix: | False | enable with "True" to use the below `locutus_DB_dev_suffix`  |
 locutus_DB_dev_suffix: | | use "_dev" when wanting to use the `locutus_dev` DB rather than its production DB from the above `locutus_DB_vault_path`redentials |
@@ -626,6 +690,7 @@ locutus_onprem_dicom_deid_pause4manual_QC_disable: | True | use "False" to enabl
 locutus_onprem_dicom_use_manifest_QC_status: | False | use "True" to indicate reprocessing or pass of the manual QC step (see sample manifest below for the additional DEID_QC_STATUS column possibilities) |
 locutus_onprem_dicom_use_manifest_QC_status_if_fail_remove_study_from_deidqc: | False | use "True" to remove study from the manual DeID QC Orthanc |
 locutus_onprem_dicom_subject_ID_preface: | | use any value as a preface to the subject_ID, typically to temporarily help group studies within a manual DeID QC Orthanc; NOTE: will NOT be applied with a qc_status of PASS:* to reprocess, since wanting no such prefaces for the final de-id data |
+
 <A NAME="cfg_onprem_dicoms_manifest"></A>
 
 ###### Sample config.yaml for **OnPrem-DICOM-DeID** module:
@@ -702,7 +767,7 @@ C333221 | Radiology | 	1234 | spine |	1235123 | | |
 
 Furthermore, should `locutus_onprem_dicom_use_manifest_QC_status=True`,
 available options for the `DEID_QC_STATUS` include:
-* **PASS**:* = reprocess with the approved configurations and bypass the Manual DeiD QC instance, thereby ensuring that all resulting de-identified data is reproducible without any further manual intervention);
+* **PASS**:* = reprocess with the approved configurations and bypass the Manual DeiD QC instance, thereby ensuring that all resulting de-identified data is reproducible without any further manual intervention;
 * **PASS_FROM_DEIDQC**:* = pull directly from the Manual DeiD QC instance (e.g., ORTHANCDEIDQC), allowing for any manual alterations to the study while on ORTHANCDEIDQC, wherever such exceptions might be required/desired;
 * **REPROCESS**:* = reprocess all the way back from the source Orthanc, but pausing again at the Manual DeID QC step;
 * **FAIL**:* = terminate processing of the study and note it as a FAIL (at least until any later REPROCESS:* attempts, should suitable configs become available).
@@ -742,16 +807,18 @@ dicom_summarize_dicom_stage_config_vault_path: | trig:/kv1/trig-dicom-staging/pr
 dicom_summarize_stats_module: | 'OnPrem' | summarize for the specified **DICOM De-ID** module |
 dicom_summarize_stats_show_accessions:  | True | set to False to show only overall summarized output, rather than a detailed summary per accession |
 dicom_summarize_stats_redact_accessions: | False | set to True to redact accession_nums in summarized output, if showing accessions |
-dicom_summarize_stats_enable_db_updates: | False | set to True to enable Summarizer sidecar functionality that may update the database (normally read-only) |
-dicom_summarize_stats_preload_new_accessions_per_manifest: | False | set to True to run the Summarizer's status-aware Preloader sidecar, allowing updates according to the manifest_status for each accession prior to processing |
-dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: |  'summarizerPreLoaded' | custom suffix, such as 'batch123' to follow the initial preload status, e.g. `ZZZ-ONDECK-4-PROCESSING:batch1234` |
-locutus_debug_onprem_dicom_force_reprocess_accession_status: | False | set to True when using module=`OnPrem` for Preloader sidecar to include options such as `ZZZ-ONDECK-4-RE-PROCESSING:batch1234`, if already `PROCESSED` (otherwise, won't even Preload since nothing more to do) |
+dicom_summarize_stats_enable_db_updates: | False | set to True to enable any Summarizer sidecars functionality with the ability to update the database (normally read-only) |
+dicom_summarize_stats_preset_reprocessing_status: | False | DEPRECATING (*); set to True to enable the Summarizer's Presetter sidecar, as superceded by the Summarizer's Preloader sidecar  |
+dicom_summarize_stats_preset_reprocessing_status_suffix: | reprocessing_in_3_2_1 | DEPRECATING (*)
+
+(*) NOTE: although the limited **DICOM Summarizer** Presetter sidecar options (`dicom_summarize_stats_preset_reprocessing_status` & its `_suffix`) are still functional, please consider them on the path to deprecation.  Instead, please see the newer, much more dynamic, [**DICOM Summarizer** Preloader sidecar]("#highlevel_dicom_summarizer_preloader"), and its additional [**DICOM Summarizer** Preloader sidecar configurations]("#cfg_dicom_preloader").
+
 
 
 ###### Sample config.yaml for **DICOM-Summarizer** command of the **OnPrem-DICOM-DeID** module:
 
 ```
-# sample Locutus config.yaml configuration File for a DICOM Summarizer module deployment for the OnPrem module
+# sample Locutus config.yaml configuration File for a DICOM Summarizer command deployment for the OnPrem module
 
 ###################################################
 # general Locutus settings:
@@ -768,7 +835,6 @@ locutus_workspace_name: project01
 locutus_verbose: False
 ###################################################
 
-
 ###################################################
 # DICOM Summarizer command (for OnPrem DICOM De-ID module) specific settings:
 #
@@ -781,15 +847,8 @@ dicom_summarize_stats_show_accessions: True
 #
 # Redact Accessions: (enable to exclude accession numbers from the Summarizer output)
 dicom_summarize_stats_redact_accessions: False
-
-# for Summarizer Preloader sidecar:
 #
-dicom_summarize_stats_preload_new_accessions_per_manifest: False
-dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: 'batch123'
-#
-# and enable_db, normally False except for actual Preloads (otherwise merely a dry run Preload):
-dicom_summarize_stats_enable_db_updates: False
-#
+# SEE ALSO: additional settings for the Preloader sidecar
 ###################################################
 ```
 
@@ -812,6 +871,82 @@ C333221 | Radiology | 	1111 | spine |	1235008 | | |
 C333221 | Radiology | 	1122 | spine |	1235015 | | |
 C333221 | Radiology | 	1234 | spine |	1235112 | | |
 C333221 | Radiology | 	1234 | spine |	1235123 | | |
+
+<A NAME="cfg_dicom_preloader"></A>
+### **DICOM Summarizer** Preloader sidecar : DB, Vault, Configs, and Manifests
+
+The **DICOM Summarizer** Preloader sidecar can dynamically update the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
+informed by that workspace's active accession records in the **Locutus STATUS** table, as Migrated from the Stager DB.
+
+
+###### **DICOM-Summarizer** Preloader-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
+
+configuration key | sample default value | description |
+---- | ---- | ---- |
+dicom_summarize_stats_preload_new_accessions_per_manifest: | False | set to True to run the Summarizer's Preloader sidecar, a more enhanced and status-aware Presetter that allows updates according to the manifest_status for each accession prior to processing |
+dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: |  'summarizerPreLoaded' | custom suffix, such as 'batch123' to follow the initial preload status, e.g. `ZZZ-ONDECK-4-PROCESSING:batch1234` |
+locutus_debug_onprem_dicom_force_reprocess_accession_status: | False | set to True when using module=`OnPrem` for the Preloader sidecar to include options such as `ZZZ-ONDECK-4-RE-PROCESSING:batch1234`, if already `PROCESSED` (with `force_reprocess`=False, the Preloader will leave it as `PROCESSED`) |
+
+Again, the Preloader also references the current setting for ...
+* `locutus_debug_onprem_dicom_force_reprocess_accession_status` (when `dicom_summarize_stats_module='OnPrem'` or comparable, for any other such module)
+
+... in order to determine if a already-PROCESSED accessions shall be Preloaded as ONDECK for RE-PROCESSING.
+
+
+###### Sample config.yaml for **DICOM-Summarizer** Preloader for the **OnPrem-DICOM-DeID** module:
+
+```
+# sample Locutus config.yaml configuration File for a DICOM Summarizer Preloader sidecar deployment for the OnPrem module
+
+###################################################
+# general Locutus settings:
+#
+locutus_run_mode: single
+#
+# Locutus DB, nested in another Vault-based config:
+locutus_DB_vault_path: vault/path/databases/locutus
+#
+# Locutus Workspaces:
+locutus_workspaces_enable: True
+locutus_workspace_name: project01
+#
+locutus_verbose: False
+###################################################
+
+###################################################
+# DICOM Summarizer command (for OnPrem DICOM De-ID module) specific settings w/ Preloader:
+#
+process_dicom_summarize_stats: True
+dicom_summarize_stats_module: ONPREM
+dicom_summarize_stats_manifest_csv: dicom_summarize_stats_manifest.csv
+#
+# Show Accessions: (disable to show only the summarized stats)
+dicom_summarize_stats_show_accessions: True
+#
+# Redact Accessions: (enable to exclude accession numbers from the Summarizer output)
+dicom_summarize_stats_redact_accessions: False
+#
+#
+# for Summarizer Preloader sidecar:
+###################################
+#
+dicom_summarize_stats_preload_new_accessions_per_manifest: True
+dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: 'batch123'
+#
+# and enable_db, normally False except for actual Preloads (otherwise merely a dry run Preload):
+dicom_summarize_stats_enable_db_updates: True
+#
+###################################################
+```
+
+<A NAME="cfg_dicom_preloader_manifest"></A>
+
+###### Sample of expected manifest format for the <U>dicom_summarize_stats_manifest.csv</U>, with dicom_summarize_stats_module=<`OnPrem`> :
+
+The input manifest for the **DICOM Summarizer** Preloader sidecar follows the same format as the **DICOM Summarizer** command.  Please see the [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest) section applicable to the configured `dicom_summarize_stats_module`:
+
+*  `dicom_summarize_stats_module='OnPrem'` (for the **OnPrem DICOM De-ID** module)
+
 
 <A NAME="cfg_system_status"></A>
 #### **Locutus System Status** command configuration
