@@ -342,20 +342,20 @@ Typical `manifest_status` values shown for each accession in a batch manifest mi
 * **PROCESSED_PREVIOUSLY_USING_***: De-ID completed previously, but with accession attributes that differ from those in the current batch manifest.
 * **PROCESSING_CHANGE_at_***: Either an active indication of the processing phase for a current De-ID run, or a zombie status from a formerly halted De-ID run. Enable Phase Sweep with re-De-ID to retry at current phase, or Force Reprocess to restart processing.
 
-Further `manifest_status` values are available through use of the [**DICOM Summarizer** Preloader sidecar]("#highlevel_dicom_summarizer_preloader").
+Further `manifest_status` values are available through use of the [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader).
 
 
 
 <A NAME="highlevel_dicom_summarizer_preloader"></A>
 #### **DICOM Summarizer** Preloader sidecar for the OnPrem De-ID module
 
-While the standard [**DICOM Summarizer** command]("#highlevel_dicom_summarizer_preloader") will merely present a passive view of the current `manifest_status` for each accession in its input manifest (including status of `NOT_FOUND` when no corresponding **Locutus MANIFEST** record is yet found), the **DICOM Summarizer** Preloader sidecar is much more active.
+While the standard [**DICOM Summarizer** command](#highlevel_dicom_summarizer_preloader) will merely present a passive view of the current `manifest_status` for each accession in its input manifest (including status of `NOT_FOUND` when no corresponding **Locutus MANIFEST** record is yet found), the **DICOM Summarizer** Preloader sidecar is much more active.
 
 To streamline monitoring ongoing statuses **DICOM De-ID** batches,
 the **DICOM Summarizer** Preloader sidecar dynamically updates the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
 informed by that workspace's active accession records in the **Locutus STATUS** table (as most recently Migrated from the Stager DB), and appended with a _preload_suffix_.
 
-In addition to those `manifest_status` values described in the above [**DICOM Summarizer** command]("#highlevel_dicom_summarizer"), the **DICOM Summarizer** Preloader sidecar also generates the following `manifest_status`:
+In addition to those `manifest_status` values described in the above [**DICOM Summarizer** command](#highlevel_dicom_summarizer), the **DICOM Summarizer** Preloader sidecar also generates the following `manifest_status`:
 
 * **ZZZ-ONDECK-PENDING_CHANGE**:_preload_suffix_
 * **ZZZ-ONDECK-4-PROCESSING_CHANGE**:_preload_suffix_
@@ -811,7 +811,7 @@ dicom_summarize_stats_enable_db_updates: | False | set to True to enable any Sum
 dicom_summarize_stats_preset_reprocessing_status: | False | DEPRECATING (*); set to True to enable the Summarizer's Presetter sidecar, as superceded by the Summarizer's Preloader sidecar  |
 dicom_summarize_stats_preset_reprocessing_status_suffix: | reprocessing_in_3_2_1 | DEPRECATING (*)
 
-(*) NOTE: although the limited **DICOM Summarizer** Presetter sidecar options (`dicom_summarize_stats_preset_reprocessing_status` & its `_suffix`) are still functional, please consider them on the path to deprecation.  Instead, please see the newer, much more dynamic, [**DICOM Summarizer** Preloader sidecar]("#highlevel_dicom_summarizer_preloader"), and its additional [**DICOM Summarizer** Preloader sidecar configurations]("#cfg_dicom_preloader").
+(*) NOTE: although the limited **DICOM Summarizer** Presetter sidecar options (`dicom_summarize_stats_preset_reprocessing_status` & its `_suffix`) are still functional, please consider them on the path to deprecation.  Instead, please see the newer, much more dynamic, [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader), and its additional [**DICOM Summarizer** Preloader sidecar configurations](#cfg_dicom_preloader).
 
 
 
