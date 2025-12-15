@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 12 December 2025_
+_last update: 15 December 2025_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -16,6 +16,7 @@ From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automa
     * DICOM Summarizer command (including the Preloader sidecar)
     * Locutus System Status command
 
+----------------------------------------------------------------
 
 ## De-ID Transform Phase
 
@@ -44,6 +45,8 @@ The following Python code snippet shows its integration from the **OnPrem DICOM 
 >                (stdoutdata, stderrdata) = proc.communicate()
 
 
+----------------------------------------------------------------
+
 <A NAME="reference_only"></A>
 ## **REFERENCE ONLY**
 
@@ -56,6 +59,8 @@ Please see the [Deploying Locutus](#deployment) section for further details.
 
 Should you be interested in helping generalize and enhance Locutus to make it more plug-and-playable outside of our internal CHOP infrastructure, please reach out to us, at:
 *  DL-locutus-support@chop.edu
+
+----------------------------------------------------------------
 
 <A NAME="license_info"></A>
 ## LICENSE INFO
@@ -93,6 +98,7 @@ SOFTWARE.
 <BR/>
 
 ----------------------------------------------------------------
+
 <A NAME="detailed_dox"></A>
 # Detailed Locutus Documentation
 
@@ -132,6 +138,8 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
 * [Contact Us](#contact)
 
 
+----------------------------------------------------------------
+
 <A NAME="overview-of-locutus-modules"></A>
 ## Overview of Locutus modules
 
@@ -142,6 +150,7 @@ High Level Program / Module | Data Type | Sources of Metadata | Functionality | 
 **OnPrem DICOM De-ID** (Radiology Imaging) |  DICOM Formatted objects (MRIs, X-Rays, CT scans, etc.) | Manifest, and accession information from Clinical Radiology (DICOM metadata) | for each accession # in the manifest: <br/> \* download DICOM objects from our Research PACS (Orthanc), <br/> \* de-identify DICOM on prem, <br/> \* use metadata from manifest & DICOM to define bucket key, and <br/> \* deliver to target |[**OnPrem DICOM De-ID** approach](#highlevel_onprem_dicoms)| [OnPrem DICOM config & manifest](#cfg_onprem_dicoms) |
 
 
+----------------------------------------------------------------
 
 <A NAME="high_level_approach_and_flow"></A>
 ## High-Level Approach and Flow
@@ -160,6 +169,8 @@ where applicable, as follows:
 	* [**Locutus System Status** command](#highlevel_locutus_system_status)
 * [Future Considerations to Approach](#highlevel_future)
 
+
+----------------------------------------------------------------
 
 <A NAME="historical_change_driven_approach"></A>
 ### Historical Change-Driven Approach
@@ -192,6 +203,8 @@ See [Future Considerations to Approach](#highlevel_future)
 and [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 for further info.
 
+
+----------------------------------------------------------------
 
 <A NAME="current_manifest_driven_approach"></A>
 ### Current Manifest-Driven Approach
@@ -230,6 +243,8 @@ See [Future Considerations to Approach](#highlevel_future)
 and [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 for further info.
 
+
+----------------------------------------------------------------
 
 <A NAME="general_locutus_approach"></A>
 ### General Locutus Approach with Processing Phases
@@ -275,6 +290,9 @@ If `locutus_expand_phase_sweep_beyond_manifest` is also enabled,  once any issue
 processing a particular input objects/file are resolved, the interim input file should be
 picked up by a Phase Sweep at its respective Phase in processing, even if it is no longer listed in the input manifest.
 
+
+----------------------------------------------------------------
+
 <A NAME="approach_summarized_for_each_locutus_module"></A>
 ### Approach Summarized for each Locutus module Processing Phase
 
@@ -284,6 +302,7 @@ Module |  Phase01: General Prep | Phase02: Prep per Manifest Line | Phase03: EXT
 **OnPrem DICOM De-ID**:<BR/>[`src_modules/module_onprem_dicom.py`](./src_modules/module_onprem_dicom.py) | general prep work | prep work per manifest-line  | download DICOMDIR zip file locally from internal Research PACS (Orthanc) | de-identify locally using [`dicom_anon.py`](./src_3rdParty/dicom_anon.py) | upload to de-identified AWS bucket, s3 key=`<sdgID>/Radiology/<PreOrPost>/uuid_<uuid#>.zip`, or local Isilon target |
 
 
+----------------------------------------------------------------
 
 <A NAME="highlevel_onprem_dicoms"></A>
 ### **OnPrem DICOM De-ID** module, additional approach details
@@ -327,6 +346,13 @@ Please notice the following `dicom-anon` flags as used for the above call from t
 
 **PHI WARNING:** Even with using such a de-identification profile to allow DICOM metadata that is generally PHI-free, and excluding DICOM series that are more prone to PHI, such Protected Health Information can still slip through the cracks of DICOM de-identification.  This is especially true when DICOM objects are obtained from other institutions which might adhere to other practices.  For example, we have observed PHI in Series Description values as set by other institutions to include Physician or even Patient names.  The balance between (a) preventing any PHI to pass through de-identification, while (b) allowing enough DICOM metadata through de-identification to support downstream research, is an ever dynamic one, requiring vigilence and collaboration between the Locutus team and researchers.
 
+Please also see the corresponding **OnPrem DICOM De-ID** module configuration and manifest sections, at:
+* [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
+    * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
+
+
+----------------------------------------------------------------
+
 <A NAME="highlevel_dicom_summarizer"></A>
 ### **DICOM Summarizer** command for OnPrem De-ID module
 
@@ -344,7 +370,12 @@ Typical `manifest_status` values shown for each accession in a batch manifest mi
 
 Further `manifest_status` values are available through use of the [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader).
 
+Please also see the corresponding **DICOM Summarizer** command configuration and manifest sections, at:
+* [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
+    * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
 
+
+----------------------------------------------------------------
 
 <A NAME="highlevel_dicom_summarizer_preloader"></A>
 #### **DICOM Summarizer** Preloader sidecar for the OnPrem De-ID module
@@ -387,10 +418,12 @@ locutus_db=# SELECT manifest_status, MIN(last_datetime_processing), MAX(last_dat
 (7 rows)
 ```
 
-- - -
-r3m0: TODO: ====> add the following underlines between EACH section, yeah? tangent.
-- - -
+Please also see the corresponding **DICOM Summarizer** Preloader sidecar configuration and manifest sections, at:
+* [**DICOM Summarizer** Preloader sidecar configuration](#cfg_dicom_preloader)
+    * [**DICOM Summarizer** Preloader sidecar manifest](#cfg_dicom_preloader_manifest)
 
+
+----------------------------------------------------------------
 
 <A NAME="highlevel_locutus_system_status"></A>
 #### **Locutus System Status** command
@@ -498,7 +531,11 @@ locutus_set_system_status_to_value: True
 	* a sub-set of the full manifest may be created by running the  [**DICOM Summarizer** command](#highlevel_dicom_summarizer) and filtering _out_ those accessions already PROCESSED.
 
 
+Please also see the corresponding **Locutus System Status** command configuration section, at:
+* [**Locutus System Status** command configuration](#cfg_system_status)
 
+
+----------------------------------------------------------------
 
 <A NAME="highlevel_future"></A>
 ### Future Considerations to Address in Approach
@@ -552,6 +589,9 @@ each Jenkins job will need the latest manifest manually re-attached.  With many 
 
 Such a "manifest-once" enhancement, though still manifest-driven, would significantly streamline the entire processing lifecycle for a batch, from De-ID through to the Summarizer.
 
+
+----------------------------------------------------------------
+
 <A NAME="configs"></A>
 ## DBs, Vault, Configurations & Manifest Formats
 
@@ -571,8 +611,14 @@ but within it might exist nested Vault paths to additional configurations for ea
 thereby negating the need for replication of any such configs.
 
 
+----------------------------------------------------------------
+
 <A NAME="cfg_locutus"></A>
 ### General Locutus: DB, Vault and Configs
+
+Please also see the corresponding general **Locutus** high-level approach section, at:
+* [General Locutus Approach](#general_locutus_approach)
+
 
 ###### Vault-based Database credentials for the Locutus DB
 
@@ -640,9 +686,15 @@ Jenkins' LOCUTUS_DOCKERHOST_CONTAINER_NAME: | "" | informational info for CFG_OU
 Jenkins' LOCUTUS_DOCKERHOST_IMAGE_TAG: | "" | informational info for CFG_OUT, of the Docker image deployed into the current container |
 
 
+----------------------------------------------------------------
 
 <A NAME="cfg_onprem_dicoms"></A>
 ### **OnPrem DICOM De-ID** module: DB, Vault, Configs, and Manifests
+
+Please also see the corresponding **OnPrem DICOM De-ID** module high-level approach section, at:
+* [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
+
+The **OnPrem DICOM De-ID** module can be used to de-identify DICOM objects within an OnPrem Locutus workspace using only "local" tools which may be accessed on premises, minimizing the sometimes hefty network transfer times associated with various cloud tools.
 
 ###### Vault-based App Config for for the upstream source OnPrem DICOM Staging
 
@@ -690,6 +742,7 @@ locutus_onprem_dicom_deid_pause4manual_QC_disable: | True | use "False" to enabl
 locutus_onprem_dicom_use_manifest_QC_status: | False | use "True" to indicate reprocessing or pass of the manual QC step (see sample manifest below for the additional DEID_QC_STATUS column possibilities) |
 locutus_onprem_dicom_use_manifest_QC_status_if_fail_remove_study_from_deidqc: | False | use "True" to remove study from the manual DeID QC Orthanc |
 locutus_onprem_dicom_subject_ID_preface: | | use any value as a preface to the subject_ID, typically to temporarily help group studies within a manual DeID QC Orthanc; NOTE: will NOT be applied with a qc_status of PASS:* to reprocess, since wanting no such prefaces for the final de-id data |
+
 
 <A NAME="cfg_onprem_dicoms_manifest"></A>
 
@@ -790,11 +843,16 @@ C333221 | Radiology | 	1234 | spine |	1235112 | REPROCESS: update da cfgs  | |
 C333221 | Radiology | 	1234 | spine |	1235123 | REPROCESS: update da cfgs  | |
 
 
+----------------------------------------------------------------
+
 <A NAME="cfg_dicom_summarizer"></A>
 ### **DICOM Summarizer** command: DB, Vault, Configs, and Manifests
 
-The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** statuses within any Locutus workspace for any Locutus **DICOM De-ID** module so configured.
+Please also see the corresponding **DICOM Summarizer** command high-level approach section, at:
+* [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
 
+
+The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** statuses within any Locutus workspace for any Locutus **DICOM De-ID** module so configured.
 
 
 ###### **DICOM-Summarizer** command-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
@@ -872,8 +930,14 @@ C333221 | Radiology | 	1122 | spine |	1235015 | | |
 C333221 | Radiology | 	1234 | spine |	1235112 | | |
 C333221 | Radiology | 	1234 | spine |	1235123 | | |
 
+
+----------------------------------------------------------------
+
 <A NAME="cfg_dicom_preloader"></A>
 ### **DICOM Summarizer** Preloader sidecar : DB, Vault, Configs, and Manifests
+
+Please also see the corresponding **DICOM Summarizer** Preloader sidecar high-level approach section, at:
+* [**DICOM Summarizer** Preloader sidecar](#highlevel_dicom_summarizer_preloader)
 
 The **DICOM Summarizer** Preloader sidecar can dynamically update the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
 informed by that workspace's active accession records in the **Locutus STATUS** table, as Migrated from the Stager DB.
@@ -939,6 +1003,7 @@ dicom_summarize_stats_enable_db_updates: True
 ###################################################
 ```
 
+
 <A NAME="cfg_dicom_preloader_manifest"></A>
 
 ###### Sample of expected manifest format for the <U>dicom_summarize_stats_manifest.csv</U>, with dicom_summarize_stats_module=<`OnPrem`> :
@@ -948,8 +1013,13 @@ The input manifest for the **DICOM Summarizer** Preloader sidecar follows the sa
 *  `dicom_summarize_stats_module='OnPrem'` (for the **OnPrem DICOM De-ID** module)
 
 
+----------------------------------------------------------------
+
 <A NAME="cfg_system_status"></A>
 #### **Locutus System Status** command configuration
+
+Please also see the corresponding **Locutus System Status** command high-level approach section, at:
+* [**Locutus System Status** command](#highlevel_locutus_system_status)
 
 The **Locutus System Status** command can be used to get or set the Locutus system statuses `overall`, per `module`, or even per `node`, as per the configured request type.
 
@@ -968,6 +1038,7 @@ locutus_set_system_status_to_value: | False | when `locutus_set_system_status_to
 locutus_system_status_enable_db_updates: | False | when `locutus_set_system_status_to_value` is "True", use "True" to allow the **Setter** mode to actually Set the status (otherwise, in a "dry run", effectively still a **Getter** mode) for the specified request type (`overall`, `node`, or `module`);<BR/>may be overriden by environment variable: `locutus_system_status_enable_db_updates` |
 
 
+----------------------------------------------------------------
 
 <A NAME="deployment"></A>
 ## Deploying Locutus
@@ -991,6 +1062,8 @@ Aspects of Locutus deployment locally, or via Jenkins, are discussed briefly in 
 * [Jenkins-based Deployment](#deployment_jenkins)
     * [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 
+
+----------------------------------------------------------------
 
 <A NAME="deployment_local"></A>
 ### Local Deployment
@@ -1017,6 +1090,8 @@ Within this reference repo are some example scripts to assist in manually deploy
     * node3: `sudo -E ./conduct_locutus_subbatches.sh -m manifest_input.csv -s suffix -dDK -N 24 -r 17:24`
 
 
+----------------------------------------------------------------
+
 <A NAME="deployment_jenkins"></A>
 ### Jenkins-based Deployment
 
@@ -1034,6 +1109,8 @@ Within the same `./general_infra/` subdir also exist two pair of additional clue
 * `./general_infra/jenkins_sample_environment_properties_content_for_<type>>_job.txt`: (e.g., [`./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt`](./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt))  to pack a list of applicable environment variables into `XTRA_DOCKER_RUN_FLAGS`, to be passed into the Locutus container at deployment.
 * `./general_infra/jenkins_sample_execute_shell_for_<type>_job.txt`:  (e.g., [`./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt`](./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt)) a very thin wrapper around `./general_infra/deploy_etl.sh`
 
+
+----------------------------------------------------------------
 
 <A NAME="deployment_jenkins_hybrid_driven"></A>
 #### Deployment of Locutus as both Change-Driven and Manifest-Driven via Jenkins
@@ -1058,6 +1135,9 @@ a background daemon, allowing the Jenkins job to immediately terminate.
 However, omitting this flag and keeping the job running in the Jenkins
 foreground allows the Jenkins job logging to be enjoyed "for free."
 
+
+----------------------------------------------------------------
+
 <A NAME="3rd_party"></A>
 ## 3rd Party Module Dependencies (in-house or not)
 
@@ -1072,6 +1152,8 @@ In addition to the various infrastructure needs mentioned above in  [Local Deplo
    * related local doc [the README for dicom-anon](./docs/README_dicom-anon.md)
 
 
+----------------------------------------------------------------
+
 <A NAME="amia_summit_2025"></A>
 ## Please cite Locutus paper from AMIA Informatics Summit 2025
 
@@ -1083,6 +1165,8 @@ If you find value in Locutus and its usefulness in progressing your own research
 
 > _Schabdach J, Williams RMS, Logan J, Padmanabhan V, D'Aiello III R, Mclaughlin J, Gonzalez A, Krause E, Tasian G, Sotardi S, Alexander-Bloch A. **From Scanner to Science: Reusing Clinically Acquired Medical Images for Research**. AMIA Informatics Summit Proceedings 2025:471-480._
 
+
+----------------------------------------------------------------
 
 <A NAME="contact"></A>
 ## Contact Us
