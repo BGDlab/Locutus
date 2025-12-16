@@ -614,11 +614,13 @@ thereby negating the need for replication of any such configs.
 ----------------------------------------------------------------
 
 <A NAME="cfg_locutus"></A>
+
 ### General Locutus: DB, Vault and Configs
 
 Please also see the corresponding general **Locutus** high-level approach section, at:
 * [General Locutus Approach](#general_locutus_approach)
 
+#### Locutus: Configs
 
 ###### Vault-based Database credentials for the Locutus DB
 
@@ -632,6 +634,8 @@ db_name
 password
 user
 ```
+
+#### Locutus: Configs
 
 ###### Vault-based App Config for Locutus
 
@@ -689,12 +693,15 @@ Jenkins' LOCUTUS_DOCKERHOST_IMAGE_TAG: | "" | informational info for CFG_OUT, of
 ----------------------------------------------------------------
 
 <A NAME="cfg_onprem_dicoms"></A>
+
 ### **OnPrem DICOM De-ID** module: DB, Vault, Configs, and Manifests
 
 Please also see the corresponding **OnPrem DICOM De-ID** module high-level approach section, at:
 * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
 
 The **OnPrem DICOM De-ID** module can be used to de-identify DICOM objects within an OnPrem Locutus workspace using only "local" tools which may be accessed on premises, minimizing the sometimes hefty network transfer times associated with various cloud tools.
+
+#### **OnPrem DICOM De-ID** module: Configs
 
 ###### Vault-based App Config for for the upstream source OnPrem DICOM Staging
 
@@ -744,7 +751,6 @@ locutus_onprem_dicom_use_manifest_QC_status_if_fail_remove_study_from_deidqc: | 
 locutus_onprem_dicom_subject_ID_preface: | | use any value as a preface to the subject_ID, typically to temporarily help group studies within a manual DeID QC Orthanc; NOTE: will NOT be applied with a qc_status of PASS:* to reprocess, since wanting no such prefaces for the final de-id data |
 
 
-<A NAME="cfg_onprem_dicoms_manifest"></A>
 
 ###### Sample config.yaml for **OnPrem-DICOM-DeID** module:
 
@@ -799,6 +805,9 @@ locutus_onprem_dicom_deidentified_dir: /mount/point/imaging/locutus_interim_proc
 ###################################################
 ```
 
+<A NAME="cfg_onprem_dicoms_manifest"></A>
+
+#### **OnPrem DICOM De-ID** module: Manifests
 
 ###### Sample of expected manifest format for <U>onprem_dicom_images_manifest.csv</U>, with `locutus_onprem_dicom_use_manifest_QC_status=False`:
 
@@ -846,14 +855,15 @@ C333221 | Radiology | 	1234 | spine |	1235123 | REPROCESS: update da cfgs  | |
 ----------------------------------------------------------------
 
 <A NAME="cfg_dicom_summarizer"></A>
+
 ### **DICOM Summarizer** command: DB, Vault, Configs, and Manifests
 
 Please also see the corresponding **DICOM Summarizer** command high-level approach section, at:
 * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
 
-
 The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** statuses within any Locutus workspace for any Locutus **DICOM De-ID** module so configured.
 
+#### **DICOM Summarizer** command: Configs
 
 ###### **DICOM-Summarizer** command-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
 
@@ -913,6 +923,8 @@ dicom_summarize_stats_redact_accessions: False
 
 <A NAME="cfg_dicom_summarizer_manifest"></A>
 
+#### **DICOM Summarizer** command: Manifests
+
 ###### Sample of expected manifest format for the <U>dicom_summarize_stats_manifest.csv</U>, with dicom_summarize_stats_module=`OnPrem`:
 
 SUBJECT_ID | imaging_type | age_at_imaging_(days) | anatomical_position | ACCESSION_NUM | DEID_QC_STATUS | locutus_manifest_ver:locutus.onprem_dicom_deid_qc.2021march15 |
@@ -934,6 +946,7 @@ C333221 | Radiology | 	1234 | spine |	1235123 | | |
 ----------------------------------------------------------------
 
 <A NAME="cfg_dicom_preloader"></A>
+
 ### **DICOM Summarizer** Preloader sidecar : DB, Vault, Configs, and Manifests
 
 Please also see the corresponding **DICOM Summarizer** Preloader sidecar high-level approach section, at:
@@ -942,6 +955,7 @@ Please also see the corresponding **DICOM Summarizer** Preloader sidecar high-le
 The **DICOM Summarizer** Preloader sidecar can dynamically update the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
 informed by that workspace's active accession records in the **Locutus STATUS** table, as Migrated from the Stager DB.
 
+#### **DICOM Summarizer** Preloader sidecar: Configs
 
 ###### **DICOM-Summarizer** Preloader-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
 
@@ -1006,6 +1020,8 @@ dicom_summarize_stats_enable_db_updates: True
 
 <A NAME="cfg_dicom_preloader_manifest"></A>
 
+#### **DICOM Summarizer** Preloader sidecar: Manifests
+
 ###### Sample of expected manifest format for the <U>dicom_summarize_stats_manifest.csv</U>, with dicom_summarize_stats_module=<`OnPrem`> :
 
 The input manifest for the **DICOM Summarizer** Preloader sidecar follows the same format as the **DICOM Summarizer** command.  Please see the [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest) section applicable to the configured `dicom_summarize_stats_module`:
@@ -1016,6 +1032,7 @@ The input manifest for the **DICOM Summarizer** Preloader sidecar follows the sa
 ----------------------------------------------------------------
 
 <A NAME="cfg_system_status"></A>
+
 #### **Locutus System Status** command configuration
 
 Please also see the corresponding **Locutus System Status** command high-level approach section, at:
@@ -1023,6 +1040,7 @@ Please also see the corresponding **Locutus System Status** command high-level a
 
 The **Locutus System Status** command can be used to get or set the Locutus system statuses `overall`, per `module`, or even per `node`, as per the configured request type.
 
+#### **Locutus System Status** command: Configs
 
 ###### **Locutus System Status**-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
 
