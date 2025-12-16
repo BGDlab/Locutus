@@ -376,8 +376,8 @@ Typical `manifest_status` values shown for each accession in a batch manifest mi
 * **PENDING_CHANGE**: record does exist in the **Locutus MANIFEST** table, but not yet in the **Locutus STATUS** table, as not yet Migrated from (or even in) the Stager DB.
 * **ERROR_***: an error occurred mid-processing.  Enable Phase Sweep with re-De-ID to retry at current phase, or Force Reprocess to restart processing.
 * **ERROR_MULTIPLE_CHANGE_UUIDS**: multiple distinct UUIDs found from the Stager DB.
+* **PREVIOUS_PROCESSING_USED_***: De-ID completed previously, but with accession attributes that differ from those in the current batch manifest.
 * **PROCESSED**: De-ID complete, with same accession attributes as current batch manifest.
-* **PROCESSED_PREVIOUSLY_USING_***: De-ID completed previously, but with accession attributes that differ from those in the current batch manifest.
 * **PROCESSING_CHANGE_at_***: Either an active indication of the processing phase for a current De-ID run, or a zombie status from a formerly halted De-ID run. Enable Phase Sweep with re-De-ID to retry at current phase, or Force Reprocess to restart processing.
 
 Further `manifest_status` values are available through use of the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader).
