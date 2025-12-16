@@ -13,7 +13,7 @@ import datetime
 APP_NAME = 'Locutus'
 # NOTE: just found more to do with: APP_VERSION = '2025.06.13at0717=enhance_deploy_scripts_to_use_cmdline_args_for_manifest_and_suffix'
 # BUT FIRST....
-APP_VERSION = '2025.12.11at1053_Migrator_SafetyCheck_for_NULL_active_Staged_addMigratorModeFAIL'
+APP_VERSION = '2025.12.16at1053_fix_Summarizer_tallies'
 
 # BEWARE of Code Smells all throughout Locutus; so sorry about that, fellow developers.
 # Locutus is most definitely long overdue for a refactoring to clean up some of those smells.
@@ -642,7 +642,7 @@ class Settings:
     LOCUTUS_DICOM_SUMMARIZE_STATS_ENABLE_DB_UPDATES = False
     # on which the following settings rely on being enabled for anything more than a safe dry-run test.
     #####################
-    # WARNING: a writable summarizer mode to help resolve multi-uuids:
+    # WARNING: a writable summarizer mode to help Preload accessions in a batch:
     LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST = False
     LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST_PREPROCESSING_SUFFIX = 'summarizerPreLoaded'
     #####################

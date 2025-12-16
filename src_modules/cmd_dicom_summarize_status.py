@@ -4088,24 +4088,26 @@ class DICOMSummarizeStats:
                 ####################
                 if accession_int not in processed_ints_accession_list:
                     processed_ints_accession_list.append(accession_int)
+                    total_status_processsed += 1
+                    # sub-counter for any PROCESSED sub-accessions from a split, i.e., with a fractional '.001', '.002', etc.
+                    if '.' in accession_str:
+                        total_status_processsed_subaccessions += 1
+
                     if self.locutus_settings.LOCUTUS_VERBOSE \
                     and self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS:
                         print('VERBOSE: NEW accession; ADDING {0} to processed_ints_accession_list (len={1}) as {2}'.format(
                             accession_str, len(processed_ints_accession_list), accession_int), flush=True)
-                        total_status_processsed += 1
                         if self.locutus_settings.LOCUTUS_VERBOSE:
                                 print('VERBOSE: AND adding +1 to give total_status_processsed={0}, manifest_status={1} for accession_str={2}'.format(
                                     total_status_processsed, manifest_status, accession_str), flush=True)
-                        # sub-counter for any PROCESSED sub-accessions from a split, i.e., with a fractional '.001', '.002', etc.
-                        if '.' in accession_str:
-                            total_status_processsed_subaccessions += 1
                 else:
+                    # NOTE: but tallying up the number of duplicates seen as PROCESSED:
+                    total_status_processsed_duplicates += 1
+
                     if self.locutus_settings.LOCUTUS_VERBOSE \
                     and self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS:
                         print('VERBOSE: DUPLICATE already FOUND {0} in processed_ints_accession_list (len={1}) as {2}; LEAVING total_status_processsed={3}'.format(
                             accession_str, len(processed_ints_accession_list), accession_int, total_status_processsed), flush=True)
-                        # NOTE: but tallying up the number of duplicates seen as PROCESSED:
-                        total_status_processsed_duplicates += 1
 
             elif manifest_status.upper() == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING:
                 total_status_pending += 1
