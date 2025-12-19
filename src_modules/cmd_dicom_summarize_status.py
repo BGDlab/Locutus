@@ -4323,7 +4323,7 @@ class DICOMSummarizeStats:
         # As such, no more need to even show (but still doing so for information & backwards compatibility)
         alphas_removed_msg = ''
         if total_accessions_with_text_NOT_removed > 0:
-            alphas_removed_msg = '[text no longer removed, thanks to alpha-numeric upgrade]'
+            alphas_removed_msg = '[text no longer removed thanks to alpha-numeric upgrade]'
         print('{0},{1},{2},{3} {4}'.format(
                     MANIFEST_OUTPUT_PREFIX,
                     MANIFEST_HEADER_STATS_OUT,
