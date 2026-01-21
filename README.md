@@ -466,7 +466,7 @@ Such a "split sub-accessions" approach is now deprecated. Through further conver
 
 ##### **Current approach: the Multi-UUID Resolver**
 
-To better support the complexities surrounding such Multi-UUID accessions, we present the **DICOM Multi-UUID Resolver** Summarizer sidecar command and our **DICOM Multi-UUID Resolver workflow** to help _potentially_ resolve Multi-UUIDs within the Radiology VNA, our Research PACS & Stager, and Locutus itself.
+To better support the complexities surrounding such Multi-UUID accessions, we present the **DICOM Multi-UUID Resolver** Summarizer sidecar command and our **DICOM Multi-UUID Resolver workflow** to help _potentially_ resolve Multi-UUIDs within the Radiology VNA, our Research PACS & Stager, and Locutus itself.  The following **DICOM Multi-UUID Resolver workflow** is very specific to our infrastructure at CHOP, and is presented here merely as one example of such a workflow, likely needing modification to best suit your infrastructure.
 
 ##### **DICOM Multi-UUID Resolver workflow**
 Our **DICOM Multi-UUID Resolver workflow** for a DICOM batch is as follows:
@@ -488,11 +488,10 @@ Our **DICOM Multi-UUID Resolver workflow** for a DICOM batch is as follows:
 
 3) **Inspect each Multi-UUID accession's UUIDs in the Radiology VNA**
 
-	While the above _`show_multiuuids` Summarizer output_ offers hints as to the potential nature of Multi-UUID accessions (as would further inspection in our Research PACS), one must also inspect the corresponding DICOM Studies in their originating source of truth to rule out potential transit-issues introduced in-flight from the VNA, through an Ambra Gateway (configured to generate a new UUID for each transmission of any DICOM Study), and on in to our Research PACS.
+	While the above _`show_multiuuids` Summarizer output_ offers hints as to the potential nature of Multi-UUID accessions (as would further inspection in our Research PACS), one must also inspect the corresponding DICOM Studies in their originating source of truth to rule out potential transit-issues introduced in-flight from our Radiology VNA, through an Ambra Gateway (configured to generate a new UUID for each transmission of any DICOM Study), and on in to our Research PACS.
 
-	At CHOP, the Radiology department allows read-only viewing of accessions in its VNA (Vendor-Neutral Archive) through [Nilread](https://www.hyland.com/en/solutions/products/nilread), Hyland's "_zero-footprint, web-based universal enterprise diagnostic viewer (that) allows images to be viewed when and anywhere they are needed_", available internally at:
+	At CHOP, the Radiology department allows internal read-only viewing of accessions in its VNA (Vendor-Neutral Archive) through [Nilread](https://www.hyland.com/en/solutions/products/nilread), Hyland's "_zero-footprint, web-based universal enterprise diagnostic viewer (that) allows images to be viewed when and anywhere they are needed_".  As such, mock screenshots from Nilread will be used to illustrate some of the Multi-UUID examples in this **DICOM Multi-UUID Resolver workflow**.
 
-	*  https://nilread.chop.edu/
 
 	<IMG SRC="./docs/images/Nilread_empty_query.png"  />
 
@@ -521,13 +520,13 @@ Our **DICOM Multi-UUID Resolver workflow** for a DICOM batch is as follows:
 	* **_faux_ Multi-UUID** with **_Internal_ Collision** only, _misrepresentating_ the Radiology VNA:
 
 		* **_faux_ Multi-UUID erroneously split into multiple UUIDs due to transit error**:
-		with an Ambra Gateway (between the VNA and our Research PACS) that is _currently_ configured to generate a new UUID for _each and every_ transmission of any DICOM Study, any failed DICOM Instances/Images of an accession that encounter in-transit errors may result in a subsequent transmission attempt, but with a differing UUID, resulting in a _faux_ Multi-UUID scenario.
+		with our Ambra Gateway (between the Radiology VNA and our Research PACS) that is _currently_ configured to generate a new UUID for _each and every_ transmission of any DICOM Study, any failed DICOM Instances/Images of an accession that encounter in-transit errors may result in a subsequent transmission attempt, but with a differing UUID, resulting in a _faux_ Multi-UUID scenario.
 
 			* _suggested_ **`RESOLVE_VIA`**=`RESEND_RADIOLOGY`
 
 			In theory, a Multi-UUID that has at least received all of its various components (all Series and Images/Instances), albeit across multiple UUIDs, could be re-assembled locally.  In practice, we have found that our Research PACS can indeed merge such multiple UUIDs to some extent, but (so far) provides different Series Numbers if merging a DICOM Series that was inadvertently split across multiple UUIDS.  As such, and until a more complete local merging mechanism exists, we might merely request a re-send from the Radiology team.
 
-		* **_faux_ Multi-UUID with duplicated complete Studies due to multiple requests for the same accession**: again, with an Ambra Gateway (between the VNA and our Research PACS) that is _currently_ configured to generate a new UUID for _each and every_ transmission of any DICOM Study, any re-send of an accession already in our Research PACS will result in such a _faux_ Multi-UUID scenario.
+		* **_faux_ Multi-UUID with duplicated complete Studies due to multiple requests for the same accession**: again, with our Ambra Gateway (between the Radiology VNA and our Research PACS) that is _currently_ configured to generate a new UUID for _each and every_ transmission of any DICOM Study, any re-send of an accession already in our Research PACS will result in such a _faux_ Multi-UUID scenario.
 
 			* _suggested_ **`RESOLVE_VIA`**=`CONSOLIDATE_LOCALLY`
 			* _alternate_ **`RESOLVE_VIA`**=`CHOOSE_LOCALLY:uuid=[...]`
