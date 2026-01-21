@@ -3,7 +3,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 15 December 2025_
+_last update: 21 January 2026_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -13,7 +13,8 @@ The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in pa
 From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automated processing workflow management system for modules and commands such as the following (as included in this reference repo):
 
     * OnPrem DICOM De-ID module
-    * DICOM Summarizer command
+    * DICOM Summarizer command (including Preloader and Multi-UUID Resolver sidecars)
+    * Locutus System Status command
 
 
 ----------------------------------------------------------------
