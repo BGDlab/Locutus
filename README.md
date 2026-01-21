@@ -4,7 +4,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 16 December 2025_
+_last update: 21 January 2026_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -14,7 +14,7 @@ The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in pa
 From the Latin word *locūtor* (“speaker, talker”), Locutus is a semi-automated processing workflow management system for modules and commands such as the following (as included in this reference repo):
 
     * OnPrem DICOM De-ID module
-    * DICOM Summarizer command (including the Preloader sidecar)
+    * DICOM Summarizer command (including the Preloader and Multi-UUID Resolver sidecars)
     * Locutus System Status command
 
 ----------------------------------------------------------------
@@ -122,6 +122,7 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
         * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
         * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
 			* [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader)
+			* [**DICOM Multi-UUID Resolver** Summarizer sidecar](#highlevel_dicom_multiuuid_resolver)
 		* [**Locutus System Status** command](#highlevel_locutus_system_status)
     * [Future Considerations to Approach](#highlevel_future)
 * [DBs, Vault, Configurations & Manifest Formats](#configs)
@@ -132,6 +133,8 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
         * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
     * [**DICOM Preloader** Summarizer sidecar configuration](#cfg_dicom_preloader)
         * [**DICOM Preloader** Summarizer sidecar manifest](#cfg_dicom_preloader_manifest)
+    * [**DICOM Multi-UUID Resolver** Summarizer sidecar configuration](#cfg_dicom_multiuuid_resolver)
+        * [**DICOM Multi-UUID Resolver** Summarizer sidecar manifest](#cfg_dicom_multiuuid_resolver_manifest)
 	* [**Locutus System Status** command configuration](#cfg_system_status)
 * [Deployment](#deployment)
     * [Local Deployment](#deployment_local)
@@ -172,6 +175,7 @@ where applicable, as follows:
     * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
     * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
 		* [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader)
+		* [**DICOM Multi-UUID Resolver** Summarizer sidecar](#highlevel_dicom_multiuuid_resolver)
 	* [**Locutus System Status** command](#highlevel_locutus_system_status)
 * [Future Considerations to Approach](#highlevel_future)
 
@@ -236,6 +240,7 @@ Samples of expected manifest formats for each Locutus module may be found at:
 * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
 * [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
 * [**DICOM Preloader** Summarizer sidecar manifest](#cfg_dicom_preloader_manifest)
+* [**DICOM Multi-UUID Resolver** Summarizer sidecar manifest](#cfg_dicom_multiuuid_resolver_manifest)
 
 
 With this Manifest-Driven approach, Locutus now generally utilizes
@@ -368,7 +373,7 @@ Please also see the corresponding **OnPrem DICOM De-ID** module configuration an
 
 ### **DICOM Summarizer** command for OnPrem De-ID module
 
-The **DICOM Summarizer** command is to offer a module-agnostic view of the overall statuses of a manifest-supplied list of accessions within a Locutus workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
+The **DICOM Summarizer** command is to offer a module-agnostic view of the overall statuses of a manifest-supplied list of accessions within a Locutus Workspace.  Detailed Summaries may be generated when using `dicom_summarize_stats_show_accessions`; otherwise, high-level Summarizer summaries of the overall batch will be generated.
 
 Typical `manifest_status` values shown for each accession in a batch manifest might include:
 
@@ -380,7 +385,7 @@ Typical `manifest_status` values shown for each accession in a batch manifest mi
 * **PROCESSED**: De-ID complete, with same accession attributes as current batch manifest.
 * **PROCESSING_CHANGE_at_***: Either an active indication of the processing phase for a current De-ID run, or a zombie status from a formerly halted De-ID run. Enable Phase Sweep with re-De-ID to retry at current phase, or Force Reprocess to restart processing.
 
-Further `manifest_status` values are available through use of the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader).
+Further `manifest_status` values are available through use of the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader), with additional support for **ERROR_MULTIPLE_CHANGE_UUIDS** accessions via the [**DICOM Multi-UUID Resolver** Summarizer sidecar](#highlevel_dicom_multiuuid_resolver).
 
 Please also see the corresponding **DICOM Summarizer** command configuration and manifest sections, at:
 * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
@@ -397,7 +402,7 @@ While the standard [**DICOM Summarizer** command](#highlevel_dicom_summarizer) w
 
 To streamline monitoring ongoing statuses **DICOM De-ID** batches,
 the **DICOM Preloader** Summarizer sidecar dynamically updates the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
-informed by that workspace's active accession records in the **Locutus STATUS** table (as most recently Migrated from the Stager DB), and appended with a _preload_suffix_.
+informed by that Locutus Workspace's active accession records in the **Locutus STATUS** table (as most recently Migrated from the Stager DB), and appended with a _preload_suffix_.
 
 In addition to those `manifest_status` values described in the above [**DICOM Summarizer** command](#highlevel_dicom_summarizer), the **DICOM Preloader** Summarizer sidecar also generates the following `manifest_status`:
 
@@ -434,6 +439,326 @@ locutus_db=# SELECT manifest_status, MIN(last_datetime_processing), MAX(last_dat
 Please also see the corresponding **DICOM Preloader** Summarizer sidecar configuration and manifest sections, at:
 * [**DICOM Preloader** Summarizer sidecar configuration](#cfg_dicom_preloader)
     * [**DICOM Preloader** Summarizer sidecar manifest](#cfg_dicom_preloader_manifest)
+
+
+----------------------------------------------------------------
+
+<A NAME="highlevel_dicom_multiuuid_resolver"></A>
+
+#### **DICOM Multi-UUID Resolver** Summarizer sidecar command for the OnPrem De-ID module
+
+Locutus was developed with the 1:1 assumption of each `accession_num` having one, _and only one_, `uuid` staged from the Research PACS.  Unfortunately, we have found this to not always be the case, having encountered many an accession with multiple UUIDs, aka a "Multi-UUID accession".
+
+When a **DICOM De-ID** module or the [**DICOM Summarizer** command](#highlevel_dicom_summarizer) encounters a Multi-UUID accession, its row in the resulting `MANIFEST_OUTPUT.csv` will indicate a `manifest_status` of:
+*  **ERROR_MULTIPLE_CHANGE_UUIDS**
+
+##### **Legacy approach: the Multi-UUID Splitter**
+
+Initially, a **DICOM Split Accession** command (now deprecated, at `src_module/DEPRECATED_cmd_dicom_split_accession.py`) was used to "split" each UUID of such a Multi-UUID accession into a "sub-accession" `accession_num`. such as follows:
+
+split_subaccession_num | src_accession_num | uuid |
+---- | ---- | ---- |
+1234.001 | 1234 | abc-123-def-456-hij |
+1234.002 | 1234 | def-456-hij-789-klm |
+1234.003 | 1234 | hij-789-klm-012-nop |
+
+Such a "split sub-accessions" approach is now deprecated. Through further conversations with the Radiology department, we eventually learned that not all such UUIDs of a Multi-UUID accession are quite as relevant to the originally requested accession, and that a more flexible approach was required.
+
+##### **Current approach: the Multi-UUID Resolver**
+
+To better support the complexities surrounding such Multi-UUID accessions, we present the **DICOM Multi-UUID Resolver** Summarizer sidecar command and our **DICOM Multi-UUID Resolver workflow** to help _potentially_ resolve Multi-UUIDs within the Radiology VNA, our Research PACS & Stager, and Locutus itself.
+
+##### **DICOM Multi-UUID Resolver workflow**
+Our **DICOM Multi-UUID Resolver workflow** for a DICOM batch is as follows:
+
+1) **Generate the `multi-uuid source sub-manifest`**
+
+	1a. find, or generate, the latest full `MANIFEST_OUTPUT.csv` through the **DICOM Summmarizer** command for for the batch in its respective Locutus Workspace.
+
+	1b. filter the full `MANIFEST_OUTPUT.csv` down to only those accessions w/ `manifest_status`=**ERROR_MULTIPLE_CHANGE_UUIDS**, to generate a `multi-uuid sub-manifest`.
+
+2) **Generate the `show_multiuuids` Summarizer output from the `multi-uuid source sub-manifest`**
+
+	2a. run the above `multi-uuid source sub-manifest` for the batch through the **DICOM Summmarizer** command in its respective Locutus Workspace with the following configuration setting enabled:
+	* `dicom_summarize_stats_show_multiuuids`=True
+
+		the resulting `MANIFEST_OUTPUT.csv` is our _`show_multiuuids` Summarizer output_, w/ each Multi-UUID accession's **ERROR_MULTIPLE_CHANGE_UUIDS** row newly preceded by `#`-commented rows of details, one for each of its UUIDs.
+
+	2b. examine the _`show_multiuuids` Summarizer output_ for any further details that the **DICOM Summmarizer** command was able to glean from the Research PACs.   Some examples shall follow the **DICOM Multi-UUID Resolver workflow**  to help further illustrate.
+
+3) **Inspect each Multi-UUID accession's UUIDs in the Radiology VNA**
+
+	While the above _`show_multiuuids` Summarizer output_ offers hints as to the potential nature of Multi-UUID accessions (as would further inspection in our Research PACS), one must also inspect the corresponding DICOM Studies in their originating source of truth to rule out potential transit-issues introduced in-flight from the VNA, through an Ambra Gateway (configured to generate a new UUID for each transmission of any DICOM Study), and on in to our Research PACS.
+
+	At CHOP, the Radiology department allows read-only viewing of accessions in its VNA (Vendor-Neutral Archive) through [Nilread](https://www.hyland.com/en/solutions/products/nilread), Hyland's "_zero-footprint, web-based universal enterprise diagnostic viewer (that) allows images to be viewed when and anywhere they are needed_", available internally at:
+
+	*  https://nilread.chop.edu/
+
+	<IMG SRC="./docs/images/Nilread_empty_query.png"  />
+
+	**PRO TIP:**  Nilread performs best in the Firefox browser, the only browser tested (for Macs, at least) to properly support the contextual Right Mouse Buttons needed to view the DICOM Attributes and their values, as per:
+
+	<IMG SRC="./docs/images/Nilread_Firefox_RMB_to_DICOM_attributes.png"  />
+
+4) **Deduce each Multi-UUID accession's cause, and suggested `RESOLVE_VIA` action**
+
+	Through the above expanded _`show_multiuuids` Summarizer output_, Nilread inspections of each Multi-UUID in the Radiology department's VNA (Vendor-Neutral Archive), and a good splash of healthy collaborative communication with the Radiology team, a _potential_ cause for each Multi-UUID can _often_ be deduced.
+
+	The reasons for such Multi-UUID accession collisions may vary, and could very well include any variation of the following two primary kinds of findings, along with their suggested **RESOLVE_VIA** action for the **DICOM Multi-UUID Resolver**:
+
+	* **_actual_ Multi-UUID** due to a **Radiology Collision** _in_ the Radiology VNA:
+
+		* **_actual_ Radiology Collision w/ same DICOM Study for a _single_ patient**: often a valid collection of DICOM objects for a single DICOM Study (with the same intended `accession_num`) of a single patient, these might have been generated across multiple acquisition sessions (for example, if the patient requires a physical break during scanning), or with additional details (such as a Structured Report) subsequently amended to the same `accession_num`, but with different UUIDs.
+
+			* _suggested_ **`RESOLVE_VIA`**=`MERGE_at_RADIOLOGY`
+
+		* **_actual_ Radiology Collision w/ differing DICOM Studies across _multiple_ patients**: often due to an external contribution from another institution, such an `accession_num` collision might also go unnoticed within the Radiology's VNA until brought to their attention.  Although Radiology will likely assign an entirely new `accession_num` to the external DICOM Study, our Multi-UUID Resolution process can use the same  **RESOLVE_VIA** action, or its effective equivelant, for the same net result of clearing out the current `accession_num` from our Research PACS, its Stager, and Locutus itself in preparation to receive a new version of the `accession_num`.
+
+			* _suggested_ **`RESOLVE_VIA`**=`MERGE_at_RADIOLOGY`
+
+				(even if more of a "_please fix_" than a "_merge_" request, _per se_)
+
+	* **_faux_ Multi-UUID** with **_Internal_ Collision** only, _misrepresentating_ the Radiology VNA:
+
+		* **_faux_ Multi-UUID erroneously split into multiple UUIDs due to transit error**:
+		with an Ambra Gateway (between the VNA and our Research PACS) that is _currently_ configured to generate a new UUID for _each and every_ transmission of any DICOM Study, any failed DICOM Instances/Images of an accession that encounter in-transit errors may result in a subsequent transmission attempt, but with a differing UUID, resulting in a _faux_ Multi-UUID scenario.
+
+			* _suggested_ **`RESOLVE_VIA`**=`RESEND_RADIOLOGY`
+
+			In theory, a Multi-UUID that has at least received all of its various components (all Series and Images/Instances), albeit across multiple UUIDs, could be re-assembled locally.  In practice, we have found that our Research PACS can indeed merge such multiple UUIDs to some extent, but (so far) provides different Series Numbers if merging a DICOM Series that was inadvertently split across multiple UUIDS.  As such, and until a more complete local merging mechanism exists, we might merely request a re-send from the Radiology team.
+
+		* **_faux_ Multi-UUID with duplicated complete Studies due to multiple requests for the same accession**: again, with an Ambra Gateway (between the VNA and our Research PACS) that is _currently_ configured to generate a new UUID for _each and every_ transmission of any DICOM Study, any re-send of an accession already in our Research PACS will result in such a _faux_ Multi-UUID scenario.
+
+			* _suggested_ **`RESOLVE_VIA`**=`CONSOLIDATE_LOCALLY`
+			* _alternate_ **`RESOLVE_VIA`**=`CHOOSE_LOCALLY:uuid=[...]`
+
+			While the above two **RESOLVE_VIA** actions can allow the **DICOM Multi-UUID Resolver workflow** to bypass any re-sends from the Radiology Department, please do note that if the Radiology team is already to be merging and/or re-sending any other DICOM Studies as part of the overall process, then it might be most efficient to let them do the same for this `accession_num` as well:
+
+			* _or even_ **`RESOLVE_VIA`**=`RESEND_RADIOLOGY`
+
+5) **Create the `multi-uuid Resolver sub-manifest` by adding `RESOLVE_VIA` actions to the `show_multiuuids` Summarizer output**
+
+	5a. Create a new version of the _`show_multiuuids` Summarizer output_ as the start of the `multi-uuid Resolver sub-manifest`
+
+	5b. Update the `manifest version` header field (field `D1`) to the latest Resolver version for the respective **DICOM De-ID** module....
+
+	* for the **OnPrem DICOM DeID** module:
+
+		`locutus_manifest_ver:locutus.onprem_dicom.resolve_multiuuids.2024oct22`
+
+	5b. Insert a `RESOLVE_VIA` column (`E`) after the `manifest version` column (`D`), and introduce the corresponding Resolver action in that new column (`E`) for each un-commented row (no leading `#`) with a `manifest_status` of **ERROR_MULTIPLE_CHANGE_UUIDS**.
+
+	* For **_actual_ Multi-UUIDs** in the Radiology VNA, the only **DICOM Multi-UUID Resolver** action available for the `RESOLVE_VIA` column is:
+
+		* **MERGE_at_RADIOLOGY**: while Radiology kindly merges (or otherwise kindly fixes) this Multi-UUID in the VNA itself, prepare our systems for Radiology to send the VNA-resolved accession UUID by clearing out all but the whole MANIFEST record locally (in our Research PACS, its Stager, and the Locutus DB).
+
+	* For any **_faux_ Multi-UUIDs** (requiring no change in the Radiology VNA itself), the available **DICOM Multi-UUID Resolver** actions for the `RESOLVE_VIA` column are:
+
+		* **RESEND_RADIOLOGY**: same local impact (of clearing out Research PACS, its Stager, and the Locutus DB) as the above **MERGE_at_RADIOLOGY**, but for those Multi-UUIDs which Radiology shall merely re-send as is, with nothing for them to merge or otherwise fix in the VNA.
+
+		* **CONSOLIDATE_LOCALLY**: to retain the most recent UUID (that with the latest/max `change_seq_id`) for this Multi-UUID accession, while locally clearing out its other UUIDs.
+
+		* **CHOOSE_LOCALLY:uuid=[...]**: like **CONSOLIDATE_LOCALLY**, but allowing the retention of a specific UUID (such as an earlier `change_seq_id`) when observed to be more relevant than the most recent (e.g., if that most recent UUID is not complete, but an earlier UUID is).  For example:
+
+			* **CHOOSE_LOCALLY:uuid=_abc-123-def-456-zyz-789_**
+
+		* **DELETE_SCAN_FROM_STAGE_ONLY**: to locally delete all UUIDs for this accession from the Research PACS and its Stager, for those accessions not yet migrated into Locutus itself.
+
+		* **DELETE_SCAN_LOCALLY**: to locally delete all UUIDs for this Multi-UUID accession from the Research PACS, its Stager & Locutus, for accessions effectively needing to be scrubbed from the entire local system for whatever reason.
+
+6) **Communicate initial findings and proposed `multi-uuid Resolver sub-manifest` with the Radiology team**
+
+	Present Radiology-specific Multi-UUID comparisons (at least those with proposed **DICOM Multi-UUID Resolver** actions of **MERGE_at_RADIOLOGY** or  **RESEND_RADIOLOGY**) to the Radiology team for their consideration and guidance in merging or fixing -vs- merely re-sending, etc.
+
+	Either way, **kindly request that they do not _yet_ re-send them**, initially primarily collaborating towards confirming their next actions, if any.
+
+7) **Await feedback from Radiology team and update `multi-uuid Resolver sub-manifest`**
+
+	Await Radiology's confirmation of merging/fixing complete in the VNA _before_ proceeding with any local resolution via the **DICOM Multi-UUID Resolver** Summarizer sidecar.
+
+	Once Radiology _has_ concluded determination of the proper Multi-UUID Resolution actions, be sure to reflect any changes for the confirmed **DICOM Multi-UUID Resolver** actions by updating any `RESOLVE_VIA` actions in the `multi-uuid Resolver sub-manifest`.
+
+8) **Run the **DICOM Multi-UUID Resolver** Summarizer sidecar**
+
+	 Recalling that the [**DICOM Summarizer** command](#highlevel_dicom_summarizer) is normally read-only, use of any sidecar such as this **DICOM Multi-UUID Resolver** for more than a first pass dry run will require that the following configuration be enabled in order to actually apply the intended changes:
+
+	* `dicom_summarize_stats_enable_db_updates`
+
+	For further configuration info, please see the corresponding **DICOM Multi-UUID Resolver** Summarizer sidecar configuration and manifest sections, at:
+	* [**DICOM Multi-UUID Resolver** Summarizer sidecar configuration](#cfg_dicom_multiuuid_resolver)
+		* [**DICOM Multi-UUID Resolver** Summarizer sidecar manifest](#cfg_dicom_multiuuid_resolver_manifest)
+
+
+	Deploy the updated `multi-uuid Resolver sub-manifest` through the **DICOM Multi-UUID Resolver** Summarizer sidecar, either manually, or through Jenkins as at:
+
+	* `Imaging -> Locutus_XTRA_tools -> locutus-resolve-multiuuids-dicom-deploy`
+
+
+	**SIDEBAR**: **Locutus Migrators**
+
+	The **Locutus Migrator** is built-in to Phase 02 of any **DICOM De-ID** module. It may even be invoked in a semi-stand-alone fashion by supplying an accession-less (headers only) manifest for the corresponding **DICOM De-ID** module.
+
+	We have setup several automated nightly Jenkins **Locutus Migrator** jobs, one for each active Locutus Workspace to be kept up to date with the latest and greatest accession arrivals.  Although such Locutus Workspaces would eventually be brought up to date at the next run of their **DICOM De-ID** module, the nightly **Locutus Migrator** jobs allow the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) to Pre-load most accurately, with such latest and greatest accession updates duly noted at any time _prior_ to deployment of the **DICOM De-ID** module.
+
+	Directly related to the **DICOM Multi-UUID Resolver** and its actions, the **Locutus Migrator** can also cascade any UUID removals on into the other Locutus Workspaces by way of its following configuration setting, as enabled in each of the Jenkins jobs:
+
+	* `locutus_dicom_remove_zombie_change_seq_ids_at_migration`
+
+	While the **DICOM Multi-UUID Resolver** will immediately clear out any no-longer-needed Multi-UUID accession UUIDs from the respective Locutus Workspace in the Locutus DB, from the Stager DB, and from the Research PACS itself, all other Locutus Workspaces will not be brought up to speed with these changes until the next nightly **Locutus Migrator** run, or manual deployment of their **DICOM De-ID** module.
+
+	**PRO TIP**:
+	If any other active Locutus Workspaces require these **DICOM Multi-UUID Resolver** changes to be reflected _sooner_ than their next nightly  **Locutus Migrator**, deploy the **AAA_Daily_Migrators_Orchestrator** Jenkins job, at:
+
+	* `Imaging -> A02_Migrators -> AAA_Daily_Migrators_Orchestrator`
+
+9) **Confirm "Ready For Re-Send" to the Radiology team**
+
+	Recall that **DICOM Multi-UUID Resolver workflow**  **step 6** (_Communicate initial findings and draft `multi-uuid Resolver sub-manifest` with the Radiology team_) included the following:
+
+	> _Either way, **kindly request that they do not _yet_ re-send them**, initially primarily collaborating towards confirming their next actions, if any._
+
+	We can now inform the Radiology team that our old Multi-UUIDs have been cleared out locally, and that we are indeed now "_Ready for Re-Send_".
+
+10) **Await Re-Sends from Radiology team**
+
+	Await Radiology's confirmation that their merging (or other such fixing magic) is complete in the VNA _before_ proceeding with any local resolution via the **DICOM Multi-UUID Resolver** Summarizer sidecar.
+
+	Once Radiology _has_ concluded determination of the proper Multi-UUID Resolution actions, be sure to reflect any changes for the confirmed **DICOM Multi-UUID Resolver** actions by updating any such changed `RESOLVE_VIA` actions in the `multi-uuid Resolver sub-manifest`.
+
+11) **Run the **DICOM Preloader** for this newly resolved and received sub-batch**
+
+	Recall that the Ambra Gateway (between the VNA and our Research PACS) is _currently_ configured to generate a new UUID for _each and every_ transmission of any DICOM Study, and that _any_ failed DICOM Instances/Images of an accession that encounter in-transit errors may result in a subsequent transmission attempt, but with a differing UUID, resulting in a _faux_ Multi-UUID scenario.
+
+	Yes, such _faux_ Multi-UUIDs can even be introduced during Radiology Re-Sends of freshly resolved Multi-UUIDs.  We have already encountered such cyclical nested Multi-UUID scenarios, and it can feel a bit like a never-ending "_lather, rinse, and repeat_" process.
+
+	As such, it is important to determine the latest state of the Locutus Workspace following such Radiology Re-sends.  We can do this by running the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) with the same `multi-uuid source sub-manifest` from the **DICOM Multi-UUID Resolver workflow** **(step 1)**.
+
+	For lucky recipients of further newly introduced Multi-UUIDs, prepare yourself to loop through the next iteration in this wacky little world of the **DICOM Multi-UUID Resolver workflow**.  Either way, be sure to communicate these latest results to the Radiology team.
+
+12) **Report back to the Radiology team with Re-Send receipt status**
+
+	Hopefully this is the last handshake step and concludes this episode of.....
+
+		the DICOM Multi-UUID Resolver workflow
+
+
+
+##### **Example Multi-UUID scenarios to resolve**
+
+* **Example #1: _actual_ Multi-UUID -vs-_faux_ Multi-UUID due to transit error**
+
+	##### Example #1 `show_multiuuids`:
+
+		| acc_num | manifest_status | uuid 	| Study Date | Inst | #Series | #Images |
+		| ------- | --------------- | ---- 	| ---------- | ---- | ------- | ------- |
+		| # 1234  | SHOW_MULTIUUIDS | abc-123	| 2023-07-20 | CHOP | 	15 	  | 1456	|
+		| # 1234  | SHOW_MULTIUUIDS | def-456 | 2023-07-20 | CHOP | 	 1 	  |    1	|
+		| 1234    | ERROR_MULTIPLE_CHANGE_UUIDS|  -  |  -  |  -   |    - 	  |    - 	|
+
+	NOTE: `acc_num=1234`'s above two UUIDs could be _either_:
+
+	a) an _actual_ Multi-UUID w/ separate UUIDs in the Radiology VNA for the same Patient and DICOM Study `accession_num` (for example, with a Structured Report subsequently added to a new Series for the Study, using a different UUID).
+
+	In Nilread, this might look like:
+
+	<IMG SRC="./docs/images/Nilread_example01a_actual_multiuuid.png"  />
+
+	b) or, a _faux_ Multi-UUID due to transit errors somewhere between the Radiology VNA and our Research PACS, resulting in a re-send from the VNA or its Ambra Gateway (configured to set a new UUID even on such re-sends).
+
+	In Nilread, this might also look like:
+
+	<IMG SRC="./docs/images/Nilread_example01b_faux_multiuuid.png"  />
+
+	In general, each such UUID should be inspected in the Radiology VNA to confirm.
+
+	For this **Example #1:**, let's say that the latter (b) was shown in Nilread, leading to diagnose this example Multi-UUID as:
+
+	* a **_faux_ Multi-UUID**, due to transit error
+
+	with a suggested **RESOLVE_VIA** action of:
+	* _suggested_ **`RESOLVE_VIA`**=`RESEND_RADIOLOGY`
+
+
+* **Example #2: _actual_ Multi-UUID Collision in VNA**
+
+	##### Example #2 `show_multiuuids`:
+
+		| acc_num | manifest_status | uuid 	| Study Date | Inst | #Series | #Images |
+		| ------- | --------------- | ---- 	| ---------- | ---- | ------- | ------- |
+		| # 3498  | SHOW_MULTIUUIDS | hij-789	| 2024-12-21 | CHOP | 	11 	  |   241	|
+		| # 3498  | SHOW_MULTIUUIDS | tuc-154 | 1999-07-04 | OTHR | 	 3 	  |    17	|
+		| 3498    | ERROR_MULTIPLE_CHANGE_UUIDS|  -  |  -  |  -   |    - 	  |     - 	|
+
+	NOTE: `acc_num=3498`'s above two UUIDs seem to be due to an _actual_ accession collision in the Radiology VNA, one DICOM Study internally from CHOP, the other likely as a external contribution from another institution.
+
+	Note that while `accession_num` might generally be considered as unique _within_ an institution, there is no guarantee of global `accession_num` uniqueness _across_ institutions.
+
+	In Nilread, this might look like:
+
+	<IMG SRC="./docs/images/Nilread_example02_actual_multiuuid.png"  />
+
+	Each such UUID should be inspected in the Radiology VNA to confirm.
+
+	For this **Example #2:**, let's say that Nilread confirmed the _actual_ Radiology Collision with differing DICOM Studies across _multiple_ patients (in this case, as also across _multiple_ institutions), leading to diagnose this example Multi-UUID as:
+
+	* an **_actual_ Multi-UUID**, due to Radiology Collision
+
+	with a suggested **RESOLVE_VIA** action of:
+	* _suggested_ **`RESOLVE_VIA`**=`MERGE_at_RADIOLOGY`
+
+		(even if more of a "_please fix_" than a "_merge_" request, _per se_)
+
+* **Example #3: _actual_ Multi-UUID -vs-_faux_ Multi-UUID due to Gateway w/ re-send**
+
+	##### Example #3 `show_multiuuids`:
+
+		| acc_num | manifest_status | uuid 	| Study Date | Inst | #Series | #Images |
+		| ------- | --------------- | ---- 	| ---------- | ---- | ------- | ------- |
+		| # 5432  | SHOW_MULTIUUIDS | xyz-321	| 2025-12-22 | CHOP | 	 7 	  |   1224	|
+		| # 5432  | SHOW_MULTIUUIDS | qrs-654 | 2025-12-22 | CHOP | 	 7 	  |   1224	|
+		| 5432    | ERROR_MULTIPLE_CHANGE_UUIDS|  -  |  -  |  -   |    - 	  |      - 	|
+
+	NOTE: `acc_num=5432`'s above two UUIDs with the _same_ number of DICOM Series _and_ total DICOM Instances/Images _could_ be either:
+
+	a) an _actual_ Multi-UUID w/ separate UUIDs in the Radiology VNA for the same Patient and DICOM Study `accession_num` (for example, with both UUID Studies having the same number of Series and Images across the Study, using a different UUID);
+
+	In Nilread, this might look like:
+
+	<IMG SRC="./docs/images/Nilread_example03a_actual_multiuuid.png"  />
+
+	b) or, a _faux_ Multi-UUID due to a subsequently re-requested re-send of the very same accession from the Radiology VNA, through its Ambra Gateway (configured to set a new UUID even on such re-sends), to our Research PACS.
+
+	In Nilread, this might look like:
+
+	<IMG SRC="./docs/images/Nilread_example03b_faux_multiuuid.png"  />
+
+	Though the latter is most probable, each such UUID should be inspected in the Radiology VNA to confirm.
+
+
+* **Example multi-uuid Resolver sub-manifest for above Examples #1-3**
+
+	A (very wide) snapshot from a sample `multi-uuid Resolver sub-manifest` follows, illustrating the evolution from the _`show_multiuuids` Summarizer output_ , with `RESOLVE_VIA` actions added for each of the above **Example #1**, **Example #2**, and **Example #3** scenarios:
+
+	<IMG SRC="./docs/images/sample_multiuuid_resolve_cmds.png"  />
+
+
+**PRO TIP:**  So, how to reduce the amount of _faux_ Multi-UUIDs?
+
+Well, the majority of these seem to be introduced by way of the Ambra Gateway when an accession that has previously been delivered is again requested and re-delivered to our Research PACS (this time with another UUID).  Such Multi-UUIDs will impact not only the current project and Locutus Workspace, but all other Locutus Workspaces referencing these accessions.  As such, be sure to find and remove any already delivered accessions (even if to other Locutus Workspaces) from new Radiology Requests, as follows:
+
+1) Use the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) to Pre-load the full initial manifest into the current Locutus Workspace _prior_ to any Radiology Requests
+2) Run the [**DICOM Summarizer** command](#highlevel_dicom_summarizer) on the _full_ initial manifest, after having been Pre-loaded into the current Locutus Workspace. NOTE: ideally, the output of the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) itself could be used directly, but our Jenkins deployment currently truncates particularly verbose output logs, including those from the Preloader.  Until this has been resolved, this secondary run of the DICOM Summarizer command offers a workaround.
+3) Filter out all accessions with any `manifest_status` other than **PENDING_CHANGE**, leaving a new Radiology Request sub-manifest with only those accessions not yet received in the Research PACS.
+4) Submit the official Radiology Request with this new sub-manifest.
+5) Once the Radiology Request has been delivered, re-run the [**DICOM Summarizer** command](#highlevel_dicom_summarizer) with new Radiology Request sub-manifest to confirm receipt.
+6) Re-request and resolve any issues with newly requested accessions still showing a `manifest_status` of **PENDING_CHANGE**
+7) Return to use of the _full_ initial manifest for this project from hereon, for any Locutus specific modules and commands beyond the Radiology Request steps.
+
+
+
+Please also see the corresponding **DICOM Multi-UUID Resolver** Summarizer sidecar configuration and manifest sections, at:
+* [**DICOM Multi-UUID Resolver** Summarizer sidecar configuration](#cfg_dicom_multiuuid_resolver)
+	* [**DICOM Multi-UUID Resolver** Summarizer sidecar manifest](#cfg_dicom_multiuuid_resolver_manifest)
 
 
 ----------------------------------------------------------------
@@ -597,7 +922,7 @@ Eventually integrate with enhanced logging capability (such as logging levels) a
 
 Locutus currently expects a manifest for almost all of its processing. The management of such batch manifests is left to the operators. When dealing with multiple manifest variations throughout the lifecycle of a batch (e.g., when filtering accessions on a status needing re-processing, etc.), such manual manifest manipulations can become not only cumbersome, but potentially error-prone.
 
-Ideally, a future Locutus enhancement shall include options to load a project manifest into a workspace one time (via, for example, a `load-manifest` command), and to thereafter process the project "manifest-free", either in its entirety, or by way of a configurable filter (e.g., only those currently in a non-PROCESSED state, etc.).
+Ideally, a future Locutus enhancement shall include options to load a project manifest into a Locutus Workspace one time (via, for example, a `load-manifest` command), and to thereafter process the project "manifest-free", either in its entirety, or by way of a configurable filter (e.g., only those currently in a non-PROCESSED state, etc.).
 
 It may also be worth noting here that our Jenkins instance is used to deploy not only **DICOM De-ID** jobs on an as-needed basis, but also **DICOM Summarizer** jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
 each Jenkins job will need the latest manifest manually re-attached.  With many such regularly scheduled Summarizers automated through Jenkins, this can likewise be unnecessarily cumbersome and potentially error-prone.
@@ -611,14 +936,17 @@ Such a "manifest-once" enhancement, though still manifest-driven, would signific
 
 ## DBs, Vault, Configurations & Manifest Formats
 
-The Vault-based database credentials and application configuration information, and samples of expected manifest formats,
-where applicable, are described below for each of the following Locutus modules:
+The Vault-based database credentials and application configuration information and samples of applicable manifest formats are described below for each of the following Locutus modules:
 
 * [General Locutus configuration](#cfg_locutus)
-* [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
+* [**OnPrem DICOM De-ID module** configuration](#cfg_onprem_dicoms)
+	* [**OnPrem DICOM De-ID module** manifest](#cfg_onprem_dicoms_manifest)
 * [**DICOM Summarizer** command configuration](#cfg_dicom_summarizer)
+	* [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest)
 * [**DICOM Preloader** Summarizer sidecar configuration](#cfg_dicom_preloader)
 	* [**DICOM Preloader** Summarizer sidecar manifest](#cfg_dicom_preloader_manifest)
+* [**DICOM Multi-UUID Resolver** Summarizer sidecar configuration](#cfg_dicom_multiuuid_resolver)
+	* [**DICOM Multi-UUID Resolver** Summarizer sidecar manifest](#cfg_dicom_multiuuid_resolver_manifest)
 * [**Locutus System Status** command configuration](#cfg_system_status)
 
 
@@ -697,6 +1025,8 @@ locutus_disable_phase_sweep: | False | use "True" when processing multiple jobs 
 locutus_expand_phase_sweep_beyond_manifest: | False | use "True" when wanting to processing *any* objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False to limit phase sweeps (when not otherwise disabled) to any objects not yet completely processed (through Phase 5) that are listed within the current input manifest (Currently only supported by the **DICOM De-ID** modules) |
 locutus_workspaces_enable: | False | use "True" when wanting to decouple a project's DB tables from the standard set of Locutus tables, allowing any multi-project accessions to have their own project-specific attributes. |
 locutus_workspace_name: | "default" | to identify & configure the Locutus module+workspace table names when `locutus_workspaces_enable` is  "True". |
+locutus_dicom_bypass_migration: | False | use "True" to bypass the Phase 02 **Locutus Migrator** of any **DICOM De-ID** module |
+locutus_dicom_remove_zombie_change_seq_ids_at_migration: | False | use "True" for the **Locutus Migrator** to back-propagate any UUIDs removed via the **DICOM Multi-UUID Resolver**  |
 Jenkins' JOB_DESCRIPTION: | "" | informational info for CFG_OUT|
 Jenkins' INPUT_MANIFEST_NAME: | "" | informational info for CFG_OUT, to supplement the fixed-name Jenkins input manifest parameter |
 Jenkins' ENV_CONFIG_PATH: | "." | informational info for CFG_OUT, to represent the path to the `config.yaml`configuration |
@@ -715,7 +1045,7 @@ Jenkins' LOCUTUS_DOCKERHOST_IMAGE_TAG: | "" | informational info for CFG_OUT, of
 Please also see the corresponding **OnPrem DICOM De-ID** module high-level approach section, at:
 * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
 
-The **OnPrem DICOM De-ID** module can be used to de-identify DICOM objects within an OnPrem Locutus workspace using only "local" tools which may be accessed on premises, minimizing the sometimes hefty network transfer times associated with various cloud tools.
+The **OnPrem DICOM De-ID** module can be used to de-identify DICOM objects within an OnPrem Locutus Workspace using only "local" tools which may be accessed on premises, minimizing the sometimes hefty network transfer times associated with various cloud tools.
 
 #### **OnPrem DICOM De-ID** module: Configs
 
@@ -877,7 +1207,7 @@ C333221 | Radiology | 	1234 | spine |	1235123 | REPROCESS: update da cfgs  | |
 Please also see the corresponding **DICOM Summarizer** command high-level approach section, at:
 * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
 
-The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** statuses within any Locutus workspace for any Locutus **DICOM De-ID** module so configured.
+The **DICOM Summarizer** command can be used to summarize the **DICOM De-ID** statuses within any Locutus Workspace for any Locutus **DICOM De-ID** module so configured.
 
 #### **DICOM Summarizer** command: Configs
 
@@ -887,15 +1217,17 @@ configuration key | sample default value | description |
 ---- | ---- | ---- |
 process_dicom_summarize_stats: | False | use "True" for Locutus to run this command;<BR/>may be overriden by environment variable: `process_dicom_summarize_stats` |
 dicom_summarize_stats_manifest_csv: | dicom_summarize_stats_manifest.csv | name of the input manifest file expected to exist in the deployment job's workspace directory;<BR/>may be overriden by environment variable: `dicom_summarize_stats_manifest_csv` |
-dicom_summarize_dicom_stage_config_vault_path: | trig:/kv1/trig-dicom-staging/production | Vault path to the DICOM Staging configuration |
+dicom_summarize_dicom_stage_config_vault_path: | namespace:/rootpath/trig-dicom-staging/production | Vault path to the OnPrem DICOM Staging configuration (including nested details of the Research PACS) |
 dicom_summarize_stats_module: | 'OnPrem' | summarize for the specified **DICOM De-ID** module |
 dicom_summarize_stats_show_accessions:  | True | set to False to show only overall summarized output, rather than a detailed summary per accession |
 dicom_summarize_stats_redact_accessions: | False | set to True to redact accession_nums in summarized output, if showing accessions |
+dicom_summarize_stats_show_multiuuids: | False | set to True to see further details of each UUID within the Research PACS for any accession with > 1 UUID |
 dicom_summarize_stats_preset_reprocessing_status: | False | DEPRECATED (*); set to True to enable the Summarizer's Presetter sidecar, as superceded by the Summarizer's Preloader sidecar  |
 dicom_summarize_stats_preset_reprocessing_status_suffix: | reprocessing_in_3_2_1 | DEPRECATED (*)
 
 Additional **DICOM Summarizer** configuration options are available through the following **DICOM Summarizer** sidecars:
 * [**DICOM Preloader** Summarizer sidecar configurations](#cfg_dicom_preloader)
+* [**DICOM Multi-UUID Resolver** Summarizer sidecar configurations](#cfg_dicom_resolver)
 
 (*) NOTE: although the limited **DICOM Presetter** Summarizer sidecar options (`dicom_summarize_stats_preset_reprocessing_status` & its `_suffix`) are still functional, the **DICOM Presetter** Summarizer sidecar is DEPRECATED.  Please enjoy the newer, much more dynamic, [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader), and its additional [**DICOM Preloader** Summarizer sidecar configurations](#cfg_dicom_preloader).
 
@@ -970,7 +1302,7 @@ Please also see the corresponding **DICOM Preloader** Summarizer sidecar high-le
 * [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader)
 
 The **DICOM Preloader** Summarizer sidecar can dynamically update the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
-informed by that workspace's active accession records in the **Locutus STATUS** table, as Migrated from the Stager DB.
+informed by that Locutus Workspace's active accession records in the **Locutus STATUS** table, as Migrated from the Stager DB.
 
 #### **DICOM Preloader** Summarizer sidecar: Configs
 
@@ -1045,6 +1377,137 @@ dicom_summarize_stats_enable_db_updates: True
 The input manifest for the **DICOM Preloader** Summarizer sidecar follows the same format as that used by the [**DICOM Summarizer** command](#highlevel_dicom_summarizer).  Please see the [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest) section applicable to the configured `dicom_summarize_stats_module`:
 
 *  `dicom_summarize_stats_module='OnPrem'` (for the **OnPrem DICOM De-ID** module)
+
+
+----------------------------------------------------------------
+
+<A NAME="cfg_dicom_multiuuid_resolver"></A>
+
+### **DICOM Multi-UUID Resolver** Summarizer sidecar : DB, Vault, Configs, and Manifests
+
+Please also see the corresponding **DICOM Multi-UUID Resolver** Summarizer sidecar high-level approach section, at:
+* [**DICOM Multi-UUID Resolver** Summarizer sidecar](#highlevel_dicom_multiuuid_resolver)
+
+The **DICOM Multi-UUID Resolver** Summarizer sidecar can dynamically update the **Locutus MANIFEST**, **Locutus STATUS**, and even the **Stager DICOM_StableStudies** tables according to "Resolve Commands" in the resolve manifest.
+
+#### **DICOM Multi-UUID Resolver** Summarizer sidecar: Configs
+
+During the initial Multi-UUID exploration mode, the following core [**DICOM Summarizer** command configurations](#cfg_dicom_summarizer) are applicable to generating the _`show_multiuuids` Summarizer output_:
+
+configuration key | sample default value | description |
+---- | ---- | ---- |
+dicom_summarize_stats_show_multiuuids: | False | set to True to see further details of each UUID within the Research PACS for any accession with > 1 UUID |
+dicom_summarize_dicom_stage_config_vault_path: | trig:/kv1/trig-dicom-staging/production | Vault path to the DICOM Staging configuration (including nested details of the Research PACS) |
+
+
+###### **DICOM Multi-UUID Resolver** Summarizer sidecar-specific configuration keys in the [General Locutus configuration](#cfg_locutus):
+
+In addition to the above and other such core [**DICOM Summarizer** command configurations](#cfg_dicom_summarizer), the **DICOM Multi-UUID Resolver** Summarizer sidecar adds the following configuration options:
+
+configuration key | sample default value | description |
+---- | ---- | ---- |
+dicom_summarize_stats_resolve_multiuuids: | False | set to True to run the Summarizer's Multi-UUID Resolver sidecar, allowing updates of any such multi-UUID accessions to support merges or re-sends from Radiology (see also the expanded Resolver manifest) |
+dicom_summarize_dicom_stage_config_vault_path: | trig:/kv1/trig-dicom-staging/production | Vault path to the DICOM Staging configuration (including nested details of the Research PACS) |
+dicom_summarize_stats_enable_db_updates: | False | set to True to allow Summarizer sidecar to update the database (normally read-only) |
+
+
+###### Sample config.yaml for **DICOM Multi-UUID Resolver** Summarizer sidecar for the **OnPrem-DICOM-DeID** module:
+
+```
+# sample Locutus config.yaml configuration File for a DICOM Summarizer Multi-UUID Resolver sidecar deployment for the OnPrem module
+
+###################################################
+# general Locutus settings:
+#
+locutus_run_mode: single
+#
+# Locutus DB, nested in another Vault-based config:
+locutus_DB_vault_path: vault/path/databases/locutus
+#
+# Locutus Workspaces:
+locutus_workspaces_enable: True
+locutus_workspace_name: project01
+#
+locutus_verbose: False
+###################################################
+
+###################################################
+# DICOM Summarizer command (for OnPrem DICOM De-ID module) specific settings w/ Multi-UUID Resolver:
+#
+process_dicom_summarize_stats: True
+dicom_summarize_stats_module: ONPREM
+dicom_summarize_stats_manifest_csv: dicom_summarize_stats_manifest.csv
+#
+# Show Accessions: (disable to show only the summarized stats)
+dicom_summarize_stats_show_accessions: True
+#
+# Redact Accessions: (enable to exclude accession numbers from the Summarizer output)
+dicom_summarize_stats_redact_accessions: False
+#
+# Vault path to the DICOM Staging configuration,
+# including nested details of the Research PACS,
+# for use with both show_multiuuids and resolve_multiuuids
+dicom_summarize_dicom_stage_config_vault_path trig:/kv1/trig-dicom-staging/
+#
+#
+# for Summarizer Show Multi-UUIDs,
+# only True prior to the Multi-UUID Resolver:
+###################################
+# dicom_summarize_stats_show_multiuuids: True
+#
+#
+# for Summarizer Multi-UUID Resolver sidecar:
+###################################
+dicom_summarize_stats_resolve_multiuuids: True
+#
+# For initial testing dry run of the Resolver, do NOT yet enable DB updates:
+dicom_summarize_stats_enable_db_updates: False
+#    (for actual resolution, set to True)
+#
+###################################################
+```
+
+
+<A NAME="cfg_dicom_multiuuid_resolver_manifest"></A>
+
+#### **DICOM Multi-UUID Resolver** Summarizer sidecar: Manifests
+
+###### Sample of expected manifest format for the <U>dicom_summarize_stats_manifest.csv</U>, with dicom_summarize_stats_module=<`OnPrem`> :
+
+The input manifest for the **DICOM Multi-UUID Resolver** Summarizer sidecar expands upon that used by the [**DICOM Summarizer** command](#highlevel_dicom_summarizer).  Please see the [**DICOM Summarizer** command manifest](#cfg_dicom_summarizer_manifest) section applicable to the configured `dicom_summarize_stats_module`:
+
+With `dicom_summarize_stats_resolve_multiuuids=True`...
+
+> _Update the `manifest version` header field (field `D1`) to the latest Resolver version for the respective **DICOM De-ID** module:_
+>
+>*  _for `dicom_summarize_stats_module='OnPrem'` (the **OnPrem DICOM De-ID** module):_
+>
+>		`locutus_manifest_ver:locutus.onprem_dicom.resolve_multiuuids.2024oct22`
+>
+
+
+Furthermore...
+
+>	_Insert a `RESOLVE_VIA` column (`E`) after the `manifest version` column (`D`), and introduce the corresponding Resolver action in that new column (`E`) for each un-commented row (no leading `#`) with a `manifest_status` of **ERROR_MULTIPLE_CHANGE_UUIDS**._
+
+
+Available options for `RESOLVE_CMD` actions include:
+* **MERGE_at_RADIOLOGY**
+* **RESEND_RADIOLOGY**
+* **CONSOLIDATE_LOCALLY**
+* **CHOOSE_LOCALLY:uuid=[...]**
+* **DELETE_SCAN_FROM_STAGE_ONLY**
+* **DELETE_SCAN_LOCALLY**
+
+Please see [**DICOM Multi-UUID Resolver** Summarizer sidecar high-level approach](#highlevel_dicom_multiuuid_resolver) for further details on the above  `RESOLVE_CMD` actions, including an _**Examples**_ section with three (3) example Multi-UUID scenarios.
+
+The [**DICOM Multi-UUID Resolver** Summarizer sidecar high-level approach](#highlevel_dicom_multiuuid_resolver) _**Examples**_ section also presents three (3) example Multi-UUID scenarios.  Each of these examples are represented in its sample Multi-UUID Resolver manifest, repeated below.
+
+> * **Example multi-uuid Resolver sub-manifest for above Examples #1-3**
+>
+>	_A (very wide) snapshot from a sample `multi-uuid Resolver sub-manifest` follows, illustrating the evolution from the _`show_multiuuids` Summarizer output_ , with `RESOLVE_VIA` actions added for each of the above **Example #1**, **Example #2**, and **Example #3** scenarios:_
+>
+> <IMG SRC="./docs/images/sample_multiuuid_resolve_cmds.png"  />
 
 
 ----------------------------------------------------------------
