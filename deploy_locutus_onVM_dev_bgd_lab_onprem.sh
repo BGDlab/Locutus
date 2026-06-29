@@ -13,7 +13,8 @@
 # * LOCUTUS_INTERIM_PROCESSING_DIR
 # * LOCUTUS_ISILON_OUTPUT_DIR
 
-
+# 2024 Dec 19: incorporating the following 11/01/24 updates for the Conductor:
+###################################################
 # 2024 Nov 01 updates to support the Locutus Conductor's multi-sub-batch deployment with cmd-line args,
 # for example:
 # DRY DEPLOY of sub-batch 1 with sub-manifest of: ./test_15batch_4conductor_2024oct31.csv.testfun_subbatch01.csv ....
@@ -127,7 +128,7 @@ echo "- - - - -"
 echo "arg_manifest_in=${arg_manifest_in}"
 if [ -z "${arg_manifest_in}" ]; then
     echo "arg_manifest_in is unset or set to the empty string"
-    echo "WARNING: this means that the currently following Locutus MANIFEST_LINK will be utilized: ${MANIFEST_LINK}"
+    echo "WARNING: this means that the currently following Locutus ONPREM MANIFEST_LINK will be utilized: ${MANIFEST_LINK}"
     #ls -al ${MANIFEST_LINK}
 else
     echo "arg_manifest_in is set to: ${arg_manifest_in}"
@@ -146,7 +147,7 @@ if [ -n "${arg_manifest_in}" ]; then
         exit -1
     fi
     ######## ONLY aim to swap arg_manifest_in if so supplied as a cmd-line arg:
-    echo "SINCE arg_manifest_in is set, will aim to swap arg_manifest_in into the following Locutus MANIFEST_LINK: ${MANIFEST_LINK}"
+    echo "SINCE arg_manifest_in is set, will aim to swap arg_manifest_in into the following Locutus **ONPREM** MANIFEST_LINK: ${MANIFEST_LINK}"
 
     # MANIFEST_LINK:
     echo "- - - - -"
@@ -257,6 +258,15 @@ echo "All looks good and setup to go.... on to the good ol deploy parts..."
 #
 # DONE: consider replacing any other sudo in the old code below with the new ${SUDO_CMD}
 ###################################################
+
+
+# EXPECTS VAULT_TOKEN from user environment
+
+# 5/15/2024: explicitly mounting the LOCUTUS_INTERIM_PROCESSING_DIR...
+# LOCAL pseudo isilon:
+export LOCUTUS_INTERIM_PROCESSING_DIR=/data/pseudoisilon_trig_imaging/locutus_bgdlab_interim_processing/onprem
+# and a pseudo one for the isilon target output:
+export LOCUTUS_ISILON_OUTPUT_DIR=/data/pseudoisilon_trig_imaging/locutus_bgdlab_output/onprem
 
 
 echo "- - - - -"

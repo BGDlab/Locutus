@@ -52,6 +52,13 @@ import requests
 # NOT? import mimetypes
 import magic
 
+# for Isilon drive access:
+# Samba SMB NOTE:
+import smbclient
+# Samba SMB NOTE:
+from smbclient.shutil import rmtree
+
+
 # file path delimeter:
 PATH_DELIM = '/'
 # ZIP file suffix, to best determine its destination dir sans suffix:
@@ -399,7 +406,7 @@ MANIFEST_HEADER_MANIFEST_VER = 'locutus_manifest_ver:locutus.onprem_dicom_deid_q
 
 # And, additional fields for generating a MANIFEST_OUTPUT in stdout via:
 #    grep MANIFEST_OUTPUT [log] | sed 's/MANIFEST_OUTPUT:,//` > manifest_out.csv
-MANIFEST_OUTPUT_PREFIX = "MANIFEST_OUTPUT:"
+MANIFEST_OUTPUT_PREFIX = src_modules.settings.MANIFEST_OUTPUT_PREFIX
 
 MANIFEST_NUM_HEADERS_WITH_QC = MANIFEST_NUM_HEADERS + 2
 # optional additional INPUT fields beyond MANIFEST_HEADER_MANIFEST_VER iff LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS:
@@ -416,6 +423,17 @@ MANIFEST_HEADER_AS_OF_DATETIME = "ONPREM_DICOM-PROCESSED_AS_OF:"
 # but commented out, and is followed by its respective split accession nunmbers.
 # We will want this included in the MANIFEST_OUTPUT such that all rows still align:
 MANIFEST_OUTPUT_INCLUDE_COMMENT_LINES = True
+
+#WAS: MANIFEST_HEADER_ACCESSIONS_TOTAL_BATCH = "TOTAL_ACCESSIONS_VIA_DB_BATCH"
+# changing "VIA" to "IN", as a subtle highlight that even if Bypassing the Manifest,
+# a non-empty BATCH_NAME will still apply from the CSV manifest, as in....
+# the corresponding batch-specific MANIFEST records will be used.
+MANIFEST_HEADER_ACCESSIONS_TOTAL_BATCH = src_modules.settings.MANIFEST_HEADER_ACCESSIONS_TOTAL_BATCH
+MANIFEST_HEADER_ACCESSIONS_FILTERED_BATCH = src_modules.settings.MANIFEST_HEADER_ACCESSIONS_FILTERED_BATCH
+MANIFEST_HEADER_ACCESSIONS_COUNTED_FILTERED_BATCH = src_modules.settings.MANIFEST_HEADER_ACCESSIONS_COUNTED_FILTERED_BATCH
+MANIFEST_HEADER_BATCH_FILTER = src_modules.settings.MANIFEST_HEADER_BATCH_FILTER
+MANIFEST_HEADER_BATCH_COUNTER_RANGE = src_modules.settings.MANIFEST_HEADER_BATCH_COUNTER_RANGE
+#####
 
 # CFG_OUT:
 # NOTE: support quick stdout log crumb to easily create a CFG output CSV via: grep CFG_OUT
@@ -446,8 +464,373 @@ class OnPrem_Dicom:
         self.onprem_dicom_target_db_name = ''
         self.onprem_dicom_target_db = ''
         self.this_hostname = ''
-        self.manifest_infile = None
-        self.manifest_reader = None
+
+        # BATCHES NOTES: setup a batch_clause once here in init() for use throughout the module:
+        self.batch_clause = ''
+        self.batch_insert_update_val = ''
+
+        #WAS: if self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+        # NOTE: we can still run with a batch, even if loading from a CSV MANIFEST, so derive em either way.
+        # effectively now using the same values, whether or not LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+        if not self.locutus_settings.LOCUTUS_BATCH_NAME:
+            self.batch_clause = 'AND batch_name IS NULL '
+            self.batch_insert_update_val = 'NULL'
+        else:
+            self.batch_clause = 'AND batch_name=\'{0}\' '.format(self.locutus_settings.LOCUTUS_BATCH_NAME)
+            ####
+            #WAS:
+            self.batch_insert_update_val = '\'{0}\''.format(self.locutus_settings.LOCUTUS_BATCH_NAME)
+            # NOTE: RETRACT the below, we DO need to wrap the ^^^ INSERT in quotes, for the SQL statement to omit quotes, since could be NULL:
+            #self.batch_insert_update_val = '{0}'.format(self.locutus_settings.LOCUTUS_BATCH_NAME)
+            ####
+        print('r3m0: DEBUG: OnPrem_Dicom:init(): found LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB={0} and LOCUTUS_BATCH_NAME=\'{1}\', '\
+                'giving batch_clause=\'{2}\' AND batch_insert_val={3}.'.format(
+                    self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB,
+                    self.locutus_settings.LOCUTUS_BATCH_NAME,
+                    self.batch_clause,
+                    self.batch_insert_update_val), flush=True)
+
+        # CFG_OUT for batch_clause:
+        print('{0},locutus-derived,{1},{2}'.format(src_modules.settings.CFG_OUT_PREFIX, "batch_clause", self.batch_clause), flush=True)
+        # CFG_OUT for batch_insert_update_val:
+        print('{0},locutus-derived,{1},{2}'.format(src_modules.settings.CFG_OUT_PREFIX, "batch_insert_update_val", self.batch_insert_update_val), flush=True)
+        # end o' __init__()
+
+
+    def create_db_tables(self, DBconnSession, MANIFEST_TABLE, STATUS_TABLE, INT_CFGS_TABLE):
+        # NOTE: formerly in Process()... # Processing Phase00:
+        # WIP: opening up for the Preloader to reuse.
+        # DEV NOTE: also called by cmd_dicom_summarize_status.py:Setup() for Preloader CREATE TABLEs
+
+        #print("r3m0 DEBUG: ====> HOWDY from OnPrem_Dicom::create_db_tables()")
+        self.locutus_settings.create_db_tables(DBconnSession)
+
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('{0}.Process(): Setting up Locutus-local tables for ONPREM DICOM '\
+                        'Status in {1} ...'.format(
+                        CLASS_PRINTNAME,
+                        self.locutus_settings.locutus_target_db_name),
+                        flush=True)
+
+        if self.locutus_settings.LOCUTUS_DB_DROP_TABLES \
+            and not self.locutus_settings.LOCUTUS_TEST:
+            # NOTE: only drop the LOCUTUS tables which are directly applicable to ONPREM DICOM:
+            if self.locutus_settings.LOCUTUS_VERBOSE:
+                print('{0}.create_db_tables(): DROPPING existing Locutus-local ONPREM DICOM '\
+                        'tables since config LOCUTUS_DB_DROP_TABLES == {1}'.format(
+                        CLASS_PRINTNAME,
+                        self.locutus_settings.LOCUTUS_DB_DROP_TABLES),
+                        flush=True)
+            DBconnSession.execute('DROP TABLE if exists {0};'.format(STATUS_TABLE))
+            DBconnSession.execute('DROP TABLE if exists {0};'.format(MANIFEST_TABLE))
+        else:
+            if self.locutus_settings.LOCUTUS_VERBOSE:
+                print('{0}.create_db_tables(): NOT dropping existing tables since config '\
+                        'LOCUTUS_DB_DROP_TABLES == {1} and '\
+                        'LOCUTUS_TEST == {2}'.format(
+                        CLASS_PRINTNAME,
+                        self.locutus_settings.LOCUTUS_DB_DROP_TABLES,
+                        self.locutus_settings.LOCUTUS_TEST),
+                        flush=True)
+
+        # Create LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE:
+        print('{0}.create_db_tables(): About to CREATE TABLE, if not exists, LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE: {1}'.format(
+            CLASS_PRINTNAME,
+            INT_CFGS_TABLE),
+            flush=True)
+        if not self.locutus_settings.LOCUTUS_TEST:
+            DBconnSession.execute('CREATE TABLE if not exists {0} ('\
+                                    'config_type text, '\
+                                    'config_version text, '\
+                                    'config_desc text, '\
+                                    'date_activated date, '\
+                                    'active boolean, '\
+                                    'at_phase int, '\
+                                    'status_field text '\
+                                    ');'.format(INT_CFGS_TABLE))
+            # and immediately populate/update LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE
+            # with the currently active internal configuration versions:
+            self.set_active_internal_configs(DBconnSession, LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES)
+
+        # CFG_OUT_PREFIX for LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES:
+        # iterate through the list of dictionaries:
+        # NOTE: as moved from Setup to here into Process(),
+        #   immediately after Phase00 CREATE TABLE LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE
+        #   and its subsequent call to: self.set_active_internal_configs(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES
+        # to ensure that any latest ACTIVE-DB configs are taken into account.
+        # TODO: consider moving all modules' CREATE TABLE code snippets up into the respective Setup().
+        for idx_cfg, cfg_dict in enumerate(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES):
+            # and iterate through each key/value pair of each dictionary:
+            for idx_key, cfg_key in enumerate(cfg_dict.keys()):
+                print('{0},onprem-dicom-hardcoded,{1}-{2}-{3},\"{4}\"'.format(
+                            src_modules.settings.CFG_OUT_PREFIX,
+                            "INT_CFGS_ACTIVES",
+                            (idx_cfg+1),
+                            cfg_key,
+                            LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES[idx_cfg][cfg_key]), flush=True)
+
+
+        ############
+        # NOTE: dynamic addition into the BELOW LOCUTUS_ONPREM_DICOM_STATUS_TABLE
+        #   of each `status_field` from the LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES list of dictionaries.
+        int_cfg_status_fields_str = ''
+        if len(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES):
+            int_cfg_status_fields = self.generate_create_status_fields_for_internal_configs(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES)
+            # NOTE: since this is an optional field, preface with a comma only since fields to add:
+            int_cfg_status_fields_str = ',{0}'.format(','.join(int_cfg_status_fields))
+
+        # TODO: consider where to also CREATE TABLE for initial self.locutus_settings.LOCUTUS_SYS_STATUS_TABLE
+        # though better would be in main_locutus(), though it doesn't yet have a DBconn
+
+        ####################
+        # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions with the STATUS table:
+        # NOTE: be sure to use LOWER to align with the postgres lower-case representation of tablename:
+        status_table_exists_results = DBconnSession.execute('SELECT EXISTS '\
+                                            '(SELECT FROM pg_tables WHERE schemaname = \'public\' '\
+                                            'AND tablename = LOWER(\'{0}\') );'.format(
+                                            STATUS_TABLE))
+        status_table_exists_results_row = status_table_exists_results.fetchone()
+        status_table_exists = status_table_exists_results_row['exists']
+
+        alter_status_table = False
+        if status_table_exists:
+            print('{0}.create_db_tables(): LOCUTUS_ONPREM_DICOM_STATUS_TABLE found at {1}, '\
+                    'checking for Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns.....'.format(
+                    CLASS_PRINTNAME,
+                    STATUS_TABLE),
+                    flush=True)
+            # NOTE: be sure to use LOWER to align with the postgres lower-case representation of table_name as well:
+            # FOLLOWING the alpha-numeric upgrade of Juneteenth 2025, deprecating accession_num_src as used in antiquated approach of SPLITS for multi-UUIDs....
+            status_table_acc_column_results = DBconnSession.execute('SELECT column_name, data_type '\
+                                                'FROM information_schema.columns '\
+                                                'WHERE table_name = LOWER(\'{0}\') '\
+                                                'AND column_name IN (\'accession_num\') '\
+                                                'ORDER BY column_name;'.format(
+                                                STATUS_TABLE))
+
+            status_table_acc_column_row = status_table_acc_column_results.fetchone()
+            # SHOULD be column #1 = accession_num, but no worries either way:
+            status_table_acc_column_row_colname = status_table_acc_column_row['column_name']
+            status_table_acc_column_row_datatype = status_table_acc_column_row['data_type']
+            if status_table_acc_column_row_datatype == 'numeric':
+                alter_status_table = True
+
+            if alter_status_table:
+                print('{0}.create_db_tables(): Altering LOCUTUS_ONPREM_DICOM_STATUS_TABLE {1} '\
+                    'with Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns now.'.format(
+                    CLASS_PRINTNAME,
+                    STATUS_TABLE),
+                    flush=True)
+                status_table_alter_results = DBconnSession.execute('ALTER TABLE {0}  '\
+                                'ALTER COLUMN accession_num TYPE TEXT ;'.format(
+                                STATUS_TABLE))
+                # AND be sure to truncate any trailing .000 left over from the conversion from NUMERIC(18,3)
+                # BATCHES NOTE: do not include any self.batch_clause here in create_db_tables(), allow it to span all.
+                status_table_alter_trunc_results = DBconnSession.execute('UPDATE {0}  '\
+                                'SET  accession_num=REPLACE(accession_num, \'.000\', \'\') '\
+                                'WHERE accession_num LIKE \'%.000\' ;'.format(
+                                STATUS_TABLE))
+            else:
+                print('{0}.create_db_tables(): INFO: STATUS table {1} already upgraded from numeric to alpha-numeric '\
+                        'through the Juneteenth 2025 Upgrade Path, YAY! '.format(
+                            CLASS_PRINTNAME,
+                            STATUS_TABLE),
+                            flush=True)
+
+        ####################
+        # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions with the MANIFEST table:
+        # NOTE: be sure to use LOWER to align with the postgres lower-case representation of tablename:
+        manifest_table_exists_results = DBconnSession.execute('SELECT EXISTS '\
+                                            '(SELECT FROM pg_tables WHERE schemaname = \'public\' '\
+                                            'AND tablename = LOWER(\'{0}\') );'.format(
+                                            MANIFEST_TABLE))
+        manifest_table_exists_results_row = manifest_table_exists_results.fetchone()
+        manifest_table_exists = manifest_table_exists_results_row['exists']
+
+        alter_manifest_table = False
+        if manifest_table_exists:
+            print('{0}.create_db_tables(): LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE found at {1}, '\
+                    'checking for Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num column.....'.format(
+                    CLASS_PRINTNAME,
+                    MANIFEST_TABLE),
+                    flush=True)
+            # NOTE: be sure to use LOWER to align with the postgres lower-case representation of table_name as well:
+            manifest_table_acc_column_results = DBconnSession.execute('SELECT column_name, data_type '\
+                                                'FROM information_schema.columns '\
+                                                'WHERE table_name = LOWER(\'{0}\') '\
+                                                'AND column_name IN (\'accession_num\') '\
+                                                'ORDER BY column_name;'.format(
+                                                MANIFEST_TABLE))
+
+            manifest_table_acc_column_row = manifest_table_acc_column_results.fetchone()
+            # SHOULD be column #1 = accession_num, but no worries either way:
+            manifest_table_acc_column_row_colname = manifest_table_acc_column_row['column_name']
+            manifest_table_acc_column_row_datatype = manifest_table_acc_column_row['data_type']
+            if manifest_table_acc_column_row_datatype == 'numeric' or manifest_table_acc_column_row_datatype== 'bigint':
+                # NOTE: flag to ALTER the MANIFEST table HERE for later alteration,
+                # BUT FIRST, a quick check on the previous alter_status, for consistency:
+                if not alter_status_table:
+                    print('{0}.create_db_tables(): WARNING: found mid-UPGRADE conflict with {1}, '\
+                            'STATUS table already upgraded from numeric to alpha-numeric accession_num columns, but NOT this MANIFEST table {2}! '\
+                            'Upgrading it momentarily...'.format(
+                            CLASS_PRINTNAME,
+                            STATUS_TABLE,
+                            MANIFEST_TABLE),
+                            flush=True)
+                alter_manifest_table = True
+            else:
+                # another quick check on the previous alter_status, for consistency:
+                if alter_status_table:
+                    print('{0}.create_db_tables(): WARNING: found mid-UPGRADE conflict with {1}, '\
+                            'STATUS table NEEDING upgrade from numeric to alpha-numeric accession_num columns, but NOT this MANIFEST table {2}! '.format(
+                            CLASS_PRINTNAME,
+                            STATUS_TABLE,
+                            MANIFEST_TABLE),
+                            flush=True)
+
+            if alter_manifest_table:
+                print('{0}.create_db_tables(): Altering LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE {1} '\
+                    'with Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num column now.'.format(
+                    CLASS_PRINTNAME,
+                    MANIFEST_TABLE),
+                    flush=True)
+                manifest_table_alter_results = DBconnSession.execute('ALTER TABLE {0}  '\
+                                'ALTER COLUMN accession_num TYPE TEXT;'.format(
+                                MANIFEST_TABLE))
+                # AND be sure to truncate any trailing .000 left over from the conversion from NUMERIC(18,3)
+                # BATCHES NOTE: do not include any self.batch_clause here in create_db_tables(), allow it to span all.
+                status_table_alter_trunc_results = DBconnSession.execute('UPDATE {0}  '\
+                                'SET  accession_num=REPLACE(accession_num, \'.000\', \'\') '\
+                                'WHERE accession_num LIKE \'%.000\' ;'.format(
+                                MANIFEST_TABLE))
+            else:
+                print('{0}.create_db_tables(): INFO: MANIFEST table {1} already upgraded from numeric to alpha-numeric '\
+                        'through the Juneteenth 2025 Upgrade Path, YAY! '.format(
+                            CLASS_PRINTNAME,
+                            MANIFEST_TABLE),
+                            flush=True)
+
+        if alter_status_table or alter_manifest_table or self.locutus_settings.LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION:
+            if self.locutus_settings.LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION:
+                print('{0}.create_db_tables(): because LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION={1},'\
+                    'will force a RE-UPGRADE of the Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns now.'.format(
+                    CLASS_PRINTNAME,
+                    self.locutus_settings.LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION),
+                    flush=True)
+            ####################
+            # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions:
+            # Now, do the automatic conversion for any of the existing Stager accessions with text accessions, as per...
+            # trig_dicom_staging=# select count(*) from dicom_stablestudies where text(accession_num) != accession_str;
+            print('{0}.create_db_tables(): Updating all STATUS_TABLE ({1}) & MANIFEST TABLE ({2}) accessions with Staged text '\
+                'with Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns now.'.format(
+                CLASS_PRINTNAME,
+                STATUS_TABLE,
+                MANIFEST_TABLE),
+                flush=True)
+            self.upgrade_alphanum_accessions_for_Juneteenth(STATUS_TABLE, MANIFEST_TABLE)
+
+        if not status_table_exists:
+            # Create LOCUTUS_ONPREM_DICOM_STATUS_TABLE:
+            print('{0}.create_db_tables(): About to CREATE TABLE LOCUTUS_ONPREM_DICOM_STATUS_TABLE: {1}'.format(
+                CLASS_PRINTNAME,
+                STATUS_TABLE),
+                flush=True)
+            # NOTE: & no the "if not exists" clause isn't as needed with the above conditional
+            # NO LONGER: including an 'as_change_seq_id' for squashing multiple change_seq_ids on the same uuid:
+            # NOTE: no comma before {1} in the below, as it may NOT appear if int_cfg_status_fields_str is empty:
+            # NOTE: prior to Juneteenth 2025 Upgrade of MANIFEST TABLE accession_num + _num_src to TEXT,
+            #                       WAS: 'accession_num decimal(18,3), '\
+            #                       WAS: 'accession_num_src bigint, '\
+            # THEN, with the Juneteenth 2025 alpha-numeric upgrade,
+            #                       WAS: 'accession_num_src text, '\
+            # 6/19/2025: Added active, retiring the need for wacky accession math (accnum<0 or accstr[0]='-') to determine if retired
+            if not self.locutus_settings.LOCUTUS_TEST:
+                DBconnSession.execute('CREATE TABLE if not exists {0} ('\
+                                    'accession_num text, '\
+                                    'batch_name text, '\
+                                    'change_seq_id int, '\
+                                    'change_type text, '\
+                                    'uuid text, '\
+                                    'subject_id text, '\
+                                    'object_info_01 text, '\
+                                    'object_info_02 text, '\
+                                    'object_info_03 text, '\
+                                    'object_info_04 text, '\
+                                    'active boolean, '\
+                                    'src_orthanc_notes text, '\
+                                    'datetime_processed timestamp without time zone, '\
+                                    'phase_processed int, '\
+                                    'identified_local_path text, '\
+                                    'deidentified_local_path text, '\
+                                    'deidentified_targets text, '\
+                                    'deid_qc_status text, '\
+                                    'deid_qc_api_study_url text, '\
+                                    'deid_qc_explorer_study_url text '\
+                                    '{1}'
+                                    ');'.format(STATUS_TABLE,
+                                                int_cfg_status_fields_str))
+
+        if not manifest_table_exists:
+            # Create LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE:
+            print('{0}.create_db_tables(): About to CREATE TABLE LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE: {1}'.format(
+                CLASS_PRINTNAME,
+                MANIFEST_TABLE),
+                flush=True)
+            # NOTE: & no the "if not exists" clause isn't as needed with the above conditional
+            # NOTE: prior to Juneteenth 2025 Upgrade of MANIFEST TABLE accession_num to TEXT,
+            #                       WAS: 'accession_num decimal(18,3), '\
+            # 6/19/2025: Added active, retiring the need for wacky accession math (accnum<0 or accstr[0]='-') to determine if retired
+            if not self.locutus_settings.LOCUTUS_TEST:
+                DBconnSession.execute('CREATE TABLE if not exists {0} ('\
+                                    'accession_num text, '\
+                                    'batch_name text, '\
+                                    'subject_id text, '\
+                                    'object_info_01 text, '\
+                                    'object_info_02 text, '\
+                                    'object_info_03 text, '\
+                                    'object_info_04 text, '\
+                                    'active boolean, '\
+                                    'last_datetime_processed timestamp without time zone, '\
+                                    'manifest_status text '\
+                                    ');'.format(MANIFEST_TABLE))
+
+        ##########################################
+        # POST-CREATE batch_name Upgrade Path for existing workspaces, both MANIFEST & STATUS tables:
+        # NOTE: be sure to use LOWER to align with the postgres lower-case representation of table_name as well.
+
+        # ONPREM MANIFEST TABLE: Upgrade to batch_name
+        manifest_table_batch_column_results = DBconnSession.execute('SELECT COUNT(column_name) as num_cols '\
+                                            'FROM information_schema.columns '\
+                                            'WHERE table_name = LOWER(\'{0}\') '\
+                                            'AND column_name = \'batch_name\' '\
+                                            ';'.format(
+                                            MANIFEST_TABLE))
+        manifest_table_batch_column_row = manifest_table_batch_column_results.fetchone()
+        manifest_table_batch_column_count = manifest_table_batch_column_row['num_cols']
+        if manifest_table_batch_column_count <= 0:
+            manifest_table_batch_alter_results = DBconnSession.execute('ALTER TABLE {0} '\
+                                            'ADD COLUMN batch_name text '\
+                                            ';'.format(
+                                            MANIFEST_TABLE))
+
+        # ONPREM STATUS TABLE: Upgrade to batch_name
+        status_table_batch_column_results = DBconnSession.execute('SELECT COUNT(column_name) as num_cols '\
+                                            'FROM information_schema.columns '\
+                                            'WHERE table_name = LOWER(\'{0}\') '\
+                                            'AND column_name = \'batch_name\' '\
+                                            ';'.format(
+                                            STATUS_TABLE))
+        status_table_batch_column_row = status_table_batch_column_results.fetchone()
+        status_table_batch_column_count = status_table_batch_column_row['num_cols']
+        if status_table_batch_column_count <= 0:
+            status_table_batch_alter_results = DBconnSession.execute('ALTER TABLE {0} '\
+                                            'ADD COLUMN batch_name text '\
+                                            ';'.format(
+                                            STATUS_TABLE))
+
+        #print("r3m0 DEBUG: ====> GOODBYE from OnPrem_Dicom::create_db_tables()")
+        # NOTE: carry on w/ Process() at: # NOTE: Migration Safety Check Stop Gap for staged accessions w/ unanticipated NULL active flag:
+        # END o' create_db_tables()
 
 
     ####################
@@ -458,6 +841,7 @@ class OnPrem_Dicom:
     # if Staged accession_str = VIRT1234, and Locutus previously used accession_num = 1234, then:
     #   if the curr Locutus accession_num = 1234, then UPGRADE Locutus acc to VIRT1234
     #   else if the Locutus accession_num = 1234.001, .002, etc., then UPGRADE to VIRT1234.001, .002, etc.
+    # BATCHES NOTE: do not include any self.batch_clause here in upgrade_alphanum_accessions_for_Juneteenth(), allow it to span all.
     ####################
     def upgrade_alphanum_accessions_for_Juneteenth(self, curr_status_table, curr_manifest_table):
         if curr_status_table == LOCUTUS_ONPREM_DICOM_STATUS_TABLE \
@@ -545,6 +929,7 @@ class OnPrem_Dicom:
             # FIRST, from STATUS via:
             num_status_records = 0
             curr_status_results = []
+            # BATCHES NOTE: do not include any self.batch_clause here in upgrade_alphanum_accessions_for_Juneteenth(), allow it to span all.
             status_migrated_alpha_results =  self.LocutusDBconnSession.execute('SELECT accession_num, uuid '\
                                                                     'FROM {0} '\
                                                                     'WHERE uuid=\'{1}\' '\
@@ -571,7 +956,7 @@ class OnPrem_Dicom:
                         'status_staged_num=\'{4}\''.format(
                         (idx+1), num_status_records, alpha_acc_uuid, curr_status_table, status_staged_num), flush=True)
 
-                    status_staged_alphanum = self.locutus_settings.itoa(status_staged_num)
+                    status_staged_alphanum = src_modules.settings.itoa(status_staged_num)
 
                     new_acc_alphanum = alpha_acc_key
                     new_acc_alphanum_src = alpha_acc_key
@@ -588,6 +973,9 @@ class OnPrem_Dicom:
                             new_acc_alphanum), flush=True)
 
                         # NOW, UPDATE the STATUS table
+                        # BATCHES NOTE: do not include any self.batch_clause here in upgrade_alphanum_accessions_for_Juneteenth(), allow it to span all.
+                        # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+                        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
                         status_updated_alpha_results =  self.LocutusDBconnSession.execute('UPDATE {0} '\
                                                                     'SET accession_num=\'{1}\' '\
                                                                     'WHERE uuid=\'{2}\' '\
@@ -612,6 +1000,7 @@ class OnPrem_Dicom:
             # NOTE: NOTE: BUT in the case of ACTUAL accessions with overlapping atoi()s, such as: OSH12345 & VIRT12345 & 12345,
             # the following method is a bit too brute force, and will mistakenly convert the 12345 to OSH12345 or VIRT12345, whichever is currently being tested.
             # Only allowing this to slide because I can't foresee a way around this at the moment, and this seems applicable only for one such overlap, a VIRT8%26
+            # BATCHES NOTE: do not include any self.batch_clause here in upgrade_alphanum_accessions_for_Juneteenth(), allow it to span all.
             manifest_migrated_alpha_results =  self.LocutusDBconnSession.execute('SELECT COUNT(accession_num) as num_recs '\
                                                                     'FROM {0} '\
                                                                     'WHERE accession_num=\'{1}\' '\
@@ -647,6 +1036,7 @@ class OnPrem_Dicom:
                 #                                            new_acc_alphanum,
                 #                                            status_staged_num))
                 # TESTING WHY IT DOESN'T SEEM TO BE actuallllllly UPDATING: AHHHHH, because it had status_staged_num INSTEAD OF new_acc_alphanum
+                # BATCHES NOTE: do not include any self.batch_clause here in upgrade_alphanum_accessions_for_Juneteenth(), allow it to span all.
                 update_cmd = 'UPDATE {0} '\
                                                             'SET accession_num=\'{1}\' '\
                                                             'WHERE accession_num=\'{2}\' '\
@@ -711,7 +1101,6 @@ class OnPrem_Dicom:
         level_num=0
 
         num_topmost_delimeters = dicom_uuid_topdir.count(PATH_DELIM)
-
         print('DEBUG walk_and_redact_zip_archive_patient_study_levels(): # top delimeters = ', num_topmost_delimeters, ' in the top-level: ', dicom_uuid_topdir)
         print('- - - - - - - - - - - - - - - -')
 
@@ -720,7 +1109,9 @@ class OnPrem_Dicom:
         level_study_from=''
         level_study_to=''
 
+        print('r3m0 DEBUG: about to os.walk(dicom_uuid_topdir={0})'.format(dicom_uuid_topdir), flush=True)
         for root, dirs, files in os.walk(dicom_uuid_topdir):
+            print('DEBUG walk_and_redact_zip_archive_patient_study_levels(): ..... os.walk() gives: root={0}, dirs={1}, files={2}'.format(root, dirs, files), flush=True)
             # NOTE: need to break this up into 2 parts, since the rename at PATENT will break the walk
             # So instead, cache the values down first, merely doing the renames thereafter
             # REDACT: print('r3m0 DEBUG, at root=',root)
@@ -728,7 +1119,8 @@ class OnPrem_Dicom:
             num_this_root_delimeters = root.count(PATH_DELIM)
             # REMOVED FROM OUTPUT LOG: print('r3m0 DEBUG: # top delimeters = ', num_this_root_delimeters, ' in this root: ', root)
             num_diff_delimeters = num_this_root_delimeters - num_topmost_delimeters
-            print('DEBUG: # DIFF delimeters = ', num_diff_delimeters, ' in this root-top. ')
+
+            print('DEBUG walk_and_redact_zip_archive_patient_study_levels(): # DIFF delimeters = ', num_diff_delimeters, ' in this root-top. ')
             level_num = num_diff_delimeters
             level_name =  level_names.get(level_num)
 
@@ -738,9 +1130,12 @@ class OnPrem_Dicom:
             #print("bytes in", len(files), "non-directory files, with: ", len(dirs), " dirs")
 
             if level_name == "Patient":
+                print('DEBUG walk_and_redact_zip_archive_patient_study_levels(): PATIENT root level_name = ', level_name, '; handling Patient level redaction. ')
                 # at PATIENT root: rename last level from current to REDACTED_PATIENT_LEVEL
+                #####
                 last_root_delim = root.rfind(PATH_DELIM)
                 new_patient_dirname = root[:last_root_delim] + PATH_DELIM + REDACTED_PATIENT_LEVEL
+
                 level_patient_from = root
                 level_patient_to = new_patient_dirname
                 #####
@@ -751,9 +1146,12 @@ class OnPrem_Dicom:
                 patient_top_level_dir = level_patient_from
 
             elif level_name == "Study":
+                print('DEBUG walk_and_redact_zip_archive_patient_study_levels(): STUDY root level_name = ', level_name, '; handling Study level redaction. ')
                 # at STUDY root: rename last level from current to REDACTED_STUDY_LEVEL
+                #####
                 last_root_delim = root.rfind(PATH_DELIM)
                 new_study_dirname = root[:last_root_delim] + PATH_DELIM + REDACTED_STUDY_LEVEL
+
                 level_study_from = root
                 level_study_to = new_study_dirname
                 #####
@@ -770,6 +1168,9 @@ class OnPrem_Dicom:
                 print('Bailing at this level == ', level_names.get(level_num))
                 print('Series Dirs: \n*', '\n* '.join(dirs))
                 break
+
+            else:
+                print('DEBUG walk_and_redact_zip_archive_patient_study_levels(): UNKNOWN root level_name = ', level_name, '; handling Study level redaction. ')
         print('- - - - - - - - - - - - - - - -')
 
         # at end of the walk, now do the renames working back upwards:
@@ -780,7 +1181,7 @@ class OnPrem_Dicom:
 
             # 1. rename STUDY level
             # REMOVED FROM OUTPUT LOG: print('NOW... RENAMING Study_root...\n FROM =', level_study_from, '\n TO = ', level_study_to )
-            print('RENAMING Study_root... ', flush=True)
+            print('RENAMING Study_root FROM \'{0}\' TO \'{1}... '.format(level_study_from, level_study_to), flush=True)
             # NOTE: CHECK that a previously such redacted STUDY doesn't already exist in this tree:
             if os.path.isdir(level_study_to):
                 # and ONLY shutil.rmtree() if it DOES exist
@@ -928,13 +1329,11 @@ class OnPrem_Dicom:
         # end of get_study_uuid_via_instance_from_Orthanc()
 
 
-    # copy_local_directory_to_Orthanc()
-    # As sourced and modified from module_gcp_dicom.py:copy_local_directory_to_GS()
-    #
+    # copy_local_directory_to_Orthanc():
     # Helper function to copy entire directory tree of DICOM files up to Orthanc, as from:
     # https://stackoverflow.com/questions/48514933/how-to-copy-a-directory-to-google-cloud-storage-using-google-cloud-python-api
     # TODO: eventually move this into a general Locutus helper function,
-    # but for now, starting with it right here in GCPDicom (and now, ONPREM_Dicom), where it is needed:
+    # but for now, starting with it right here in ONPREM_Dicom, where it is needed:
     #
     # RETURNS: False if success; True (and/or, eventually a non-zero HTTP status) if any error(s) encountered
     #   AND: last_returned_api_study_url
@@ -988,7 +1387,7 @@ class OnPrem_Dicom:
         # For more control over creating a non-empty exception, replacing:
         if not os.path.isdir(local_path):
             # TODO: consider checking self.locutus_settings.LOCUTUS_FORCE_SUCCESS,
-            # but since this is required to upload into GS for GCP-based DeID,
+            # but since this is required (e.g., to upload into GS for GCP-based DeID),
             # it really is a show stopper at this point:
             raise ValueError('Directory not found for copy_local_directory_to_Orthanc() local path of "{0}".'.format(
                                 local_path))
@@ -1002,22 +1401,6 @@ class OnPrem_Dicom:
         for local_file in glob.glob(local_path + '/**'):
             if os.path.isfile(local_file):
                 image_counter += 1
-
-                # r3m0: TODO: disable even this local_file along with the mighty verbose DEBUG INFO messages once all good:
-                """
-                if self.locutus_settings.LOCUTUS_VERBOSE:
-                    print('{0}.copy_local_directory_to_Orthanc(): uploading local_file=\'{1}\'...'.format(
-                                CLASS_PRINTNAME,
-                                local_file),
-                                flush=True)
-                elif image_counter == 1:
-                        # for NON-verbose, create a minimal running output header, at the first image only:
-                        print('{0}.copy_local_directory_to_Orthanc(): approximate image upload counter: [{1}]'.format(
-                                    CLASS_PRINTNAME,
-                                    image_counter),
-                                    end = '',
-                                    flush=True)
-                """
 
                 if (image_counter % 10) == 0:
                     # first an image-uploading status update to stdout:
@@ -1284,7 +1667,7 @@ class OnPrem_Dicom:
         #####################################
         # TODO: eventually add further support for user-configurable overrides.
         #####################################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active gcp/onprem tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
         #########################
 
         if self.locutus_settings.LOCUTUS_VERBOSE:
@@ -1331,7 +1714,7 @@ class OnPrem_Dicom:
         #####################################
         # TODO: eventually add further support for user-configurable overrides.
         #####################################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active gcp/onprem tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
         #########################
 
         if self.locutus_settings.LOCUTUS_VERBOSE:
@@ -1353,9 +1736,9 @@ class OnPrem_Dicom:
             # Add checks any module-specific cfg['config_type'] that support user-configurable overrides,
             #   and would therefore not automatically utilize the default.
             # For example, although the ONPREM DICOM module does not yet expose its dicom_anon configurations,
-            # consider GCP DICOM modules's user-configurable options for:
-            #   * gcp_image_mode, and,
-            #   * (eventually) gcp_keeplist_ver
+            # consider eventual module user-configurable options for:
+            #   * image_mode, and,
+            #   * (eventually) keeplist_ver
             ######
             # For all other cases, though, merely use the RAM-active version, appending its key & value:
             append_this_cfg = False
@@ -1434,7 +1817,7 @@ class OnPrem_Dicom:
         # TODO: return not just a True/False for matching but ALSO a previous vs current version &/or date, perhaps?
         # and separately, for the PREVIOUS_PROCESSING_USED to split much like it does with the manifest attributes.
         #####################################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active gcp/onprem tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
         #########################
         # NOTE: comparison refers to the internally defined int_cfgs as RAM or RAM-ACTIVE versions
         #   as -vs- the ACTIVE-DB version.
@@ -1501,16 +1884,19 @@ class OnPrem_Dicom:
                 # as these would currently result in errors such as:
                 # sqlalchemy.exc.ProgrammingError: (psycopg2.ProgrammingError) column "cfg_test_col" does not exist
                 # LINE 1: SELECT cfg_test_col FROM onprem_dicom_status WHERE accessio...
+                #
+                # BATCHES NOTE: limit to the current self.batch_clause:
                 prev_procesed_results = self.LocutusDBconnSession.execute('SELECT {0} '\
                                                     'FROM {1} '\
                                                     'WHERE accession_num=\'{2}\' '\
                                                     '    AND active '\
                                                     'AND uuid = \'{3}\' '\
-                                                    ';'.format(
+                                                    '{4} ;'.format(
                                                     cfg['status_field'],
                                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                     curr_acc_num,
-                                                    curr_uuid))
+                                                    curr_uuid,
+                                                    self.batch_clause))
 
                 prev_processed_row = prev_procesed_results.fetchone()
 
@@ -1577,12 +1963,11 @@ class OnPrem_Dicom:
         return (int_cfgs_all_match, active_int_cfgs_mismatches, previously_processed_int_cfgs_mismatches, max_matched_phase)
 
 
-    def set_active_internal_configs(self,
-                                    int_cfgs):
+    def set_active_internal_configs(self, DBconnSession, int_cfgs):
         # compare the internally known internal configuations against those in the internal configs table,
         # setting the most active within the DB.
         #########################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active gcp/onprem tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
         #########################
         # NOTE: the LOCUTUS_*DICOM_INT_CFGS_TABLE is assumed to have already been created by this point,
         #   but might be empty, or perhaps already populated with active (or previously active) cfgs.
@@ -1615,7 +2000,8 @@ class OnPrem_Dicom:
             cfg_date_ram = datetime.datetime.strptime(str(cfg['date_activated']), '%Y-%m-%d')
 
             # 1) CHECK if there is already an ACTIVE-DB cfg matching this RAM-based type:
-            cfg_results = self.LocutusDBconnSession.execute('SELECT config_type, config_version, '\
+            # BATCHES NOTE: do not include any self.batch_clause here in set_active_internal_configs(), allow it to span all.
+            cfg_results = DBconnSession.execute('SELECT config_type, config_version, '\
                                                         'config_desc, date_activated, '\
                                                         'at_phase, status_field '\
                                                         'FROM {0} WHERE config_type=\'{1}\' '\
@@ -1699,7 +2085,8 @@ class OnPrem_Dicom:
                         # NOTE: the latest RAM version will be INSERTed further below,
                         #   at the outer "if not active_cfg_type_match"
                         ######
-                        self.LocutusDBconnSession.execute('UPDATE {0} '\
+                        # BATCHES NOTE: do not include any self.batch_clause here in set_active_internal_configs(), allow it to span all.
+                        DBconnSession.execute('UPDATE {0} '\
                                     'SET active=False '\
                                     'WHERE config_type=\'{1}\' '\
                                     'AND config_version=\'{2}\' '\
@@ -1745,7 +2132,7 @@ class OnPrem_Dicom:
                     # and if so, merely ensure that the active status is True, WARNING if for some reason it wasn't already:
                     #####
                     # 1) CHECK if there is already a cfg (active or not!) matching this RAM-based type:
-                    new_cfg_results = self.LocutusDBconnSession.execute('SELECT active FROM {0} '\
+                    new_cfg_results = DBconnSession.execute('SELECT active FROM {0} '\
                                                         'WHERE config_type=\'{1}\' '\
                                                         'AND config_version=\'{2}\' '\
                                                         'AND config_desc=\'{3}\' '\
@@ -1827,7 +2214,8 @@ class OnPrem_Dicom:
                             # post-NOTE: so here, finally, the latest RAM version will be INSERTed further below,
                             #   within this "if not active_cfg_type_match"
                             ######
-                            self.LocutusDBconnSession.execute('UPDATE {0} '\
+                            # BATCHES NOTE: no self.batch_clause with the internal configs
+                            DBconnSession.execute('UPDATE {0} '\
                                                         'SET active=True '\
                                                         'WHERE config_type=\'{1}\' '\
                                                         'AND config_version=\'{2}\' '\
@@ -1846,7 +2234,9 @@ class OnPrem_Dicom:
                                                         ))
                     else:
                         # no existing INT CFG found that matches, go ahead and INSERT it, hardcoding to active=TRUE:
-                        self.LocutusDBconnSession.execute('INSERT INTO {0} ('\
+                        # BATCHES NOTE: no self.batch_clause with the internal configs
+                        # BATCHES NOTE: INT_CFG needs no parallel INSERT into LOCUTUS_ALL_BATCHES_TABLE.
+                        DBconnSession.execute('INSERT INTO {0} ('\
                                             'config_type, '\
                                             'config_version, '\
                                             'config_desc, '\
@@ -1940,61 +2330,108 @@ class OnPrem_Dicom:
         # helper method to update ONLY the corresponding STATUS record's phase_processed for an accession_num
         # to roll it back to the last matching config phase,
         # pending results from compare_active_internal_configs_vs_processed()
+        # BATCHES NOTE: limit to the current self.batch_clause:
+        # BATCHES NOTE: STATUS UPDATES need no parallel UPDATE in LOCUTUS_ALL_BATCHES_TABLE.
+        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
         self.LocutusDBconnSession.execute('UPDATE {0} '\
                                         'SET phase_processed={1} '\
                                         'WHERE accession_num=\'{2}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {3} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         last_phase_processed,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
 
 
+    # TODO: combine Settings:retire_accession*() & De-ID:preretire_accession*()
+    # incl their sub-methods, (pre)retire_accession_[status/manifest]_only()
+    # for a single centralized set of methods to maintain:
     def preretire_change_status_only(self, change_seq_id):
         # helper method to update and retire ONLY the corresponding STATUS records for a change_seq_id only
         # (for where the corresponding status record in the current workspace is no longer valid,
         # such as following a workspace migration's removal of a zombie change from another workspace...)
+
+        # BATCHES NOTE: now reference init's self.batch_clause rather than rebuilding it in multiple places:
+        # DONE: consider removing batch_only & batch_name from this method's parameters, now that using self.batch_clause
+
         # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
         # and still setting the wacky accession-retirement math for backwards compatibility, while...
         # FOLLOWING the alpha-numeric upgrade of Juneteenth 2025, deprecating accession_num_src as used in antiquated approach of SPLITS for multi-UUIDs....
+        # BATCHES NOTE: limit to the current self.batch_clause????
+        # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
         self.LocutusDBconnSession.execute('UPDATE {0} '\
                                         'SET change_seq_id=(-1*change_seq_id), '\
                                         '    accession_num=concat(\'-\', accession_num), '\
                                         '    active=False '\
                                         'WHERE change_seq_id = {1} '\
-                                        '   AND active ;'.format(
+                                        '   AND active {2} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                        change_seq_id))
+                                        change_seq_id,
+                                        self.batch_clause))
 
 
-    def preretire_accession_manifest_only(self,
-                                        accession_num):
+    # TODO: combine Settings:retire_accession*() & De-ID:preretire_accession*()
+    # incl their sub-methods, (pre)retire_accession_[status/manifest]_only()
+    # for a single centralized set of methods to maintain:
+    def preretire_accession_manifest_only(self, accession_num):
         # helper method to update and retire ONLY the corresponding MANIFEST records for an accession_num
         # (keeping status record in place for cases where the current status record is valid and possibly mid-processing,
         #  but for which the manifest record has been changed in the meantime and only it needs updating...)
+
+        # BATCHES NOTE: now reference init's self.batch_clause rather than rebuilding it in multiple places:
+        # DONE: consider removing batch_only & batch_name from this method's parameters, now that using self.batch_clause
+
         # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
         # and still setting the wacky accession-retirement math for backwards compatibility, while...
+        # BATCHES NOTE: limit to the current self.batch_clause????
         self.LocutusDBconnSession.execute('UPDATE {0} '\
                                         'SET '\
                                         '    accession_num=concat(\'-\', accession_num), '\
                                         '    active=False '\
                                         'WHERE accession_num=\'{1}\' '\
-                                        '   AND active ;'.format(
+                                        '   AND active {2} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
+        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+        # ===> USES update_manifest_record(active=False) to do so.
+        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                curr_accession_num,
+                                                False,
+                                                interim_manifest_status,
+                                                new_subject_id=None)
+        # WAS:
+        """
+        # LOCUTUS_ALL_BATCHES_TABLE: and NOW, the actual retiring UPDATE:
+        # BATCHES NOTE: limit to the current self.batch_clause????
+        # TODO: create a corresponding Settings.retire_batch_record() to negate the accession_num:
+        self.LocutusDBconnSession.execute('UPDATE {0} '\
+                                        'SET accession_num=concat(\'-\',accession_num), '\
+                                        'active=False '\
+                                        'WHERE accession_num=\'{1}\' '\
+                                        'AND active {2} ;'.format(
+                                        self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE,
+                                        accession_num,
+                                        self.batch_clause))
+        """
 
 
     def reset_accession_status_for_reprocessing(self, accession_num, new_subject_id, new_object_info_01, new_object_info_02, new_object_info_03):
-        # as from module_gcp_dicom.py:
         # helper method to reset the MANIFEST & STATUS records for an accession_num for reprocessing,
         # but only if already previousluy processed, at least partially;
         # allow all PENDING_CHANGE and PENDING_CHANGE_RADIOLOGY_MERGE to remain as they are.
         #################################
         # NOTE: COULD consider setting this method up general purpose enough to bring in both
-        # the OnPrem + GCP savvy versions of the attribute updates for either:
-        #    GCP: subject_id, object_info
+        # the savvy versions of the attribute updates for either:
         #    OnPrem: subject_id, object_info_01, object_info_02, object_info_03, etc.
         # (much as done for the Summarizer and its various preloader () preset helper methods)
-        # but.... since this is specifically in the GCP module, we can be GCP-specific ;-)
         #################################
 
         # TODO: add constants up top for all such statuses:
@@ -2015,31 +2452,58 @@ class OnPrem_Dicom:
                 accession_num),
                 flush=True)
 
+        # ONLY UPDATE if manifest_status NOT LIKE %PENDING_CHANGE%:
+        # BATCHES NOTE: limit to the current self.batch_clause:
+        # NOTE: will ONLY UPDATE that MANIFEST record if NOT LIKE %PENDING_CHANGE%!
+        # WAS WITH:  'AND manifest_status NOT LIKE \'%{5}%\' ;'.format(...)
+        # and the format shall now merely ignore the MANIFEST_OUTPUT_STATUS_PENDING,
+        # and ADDING last_datetime_processed:
         self.LocutusDBconnSession.execute('UPDATE {0} '\
                                         'SET manifest_status=\'{1}\', '\
+                                        'last_datetime_processed=now(), '\
                                         'subject_id=\'{2}\', '\
                                         'object_info_01=\'{3}\', object_info_02=\'{4}\', object_info_03=\'{5}\'  '\
                                         'WHERE accession_num=\'{6}\' '\
-                                        '    AND active '\
-                                        'AND manifest_status not like \'PENDING%\''.format(
+                                        '    AND active {8} '\
+                                        ' ;'.format(
                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                         new_manifest_status,
                                         new_subject_id,
                                         new_object_info_01, new_object_info_02, new_object_info_03,
-                                        accession_num))
+                                        accession_num,
+                                        self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING,
+                                        self.batch_clause))
+        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+        # NOTE: this one WILL UPDATE that LOCUTUS_ALL_BATCHES_TABLE=AAA_LOCUTUS_BATCHES record EVEN IF  LIKE %PENDING_CHANGE%,
+        # leaving the MANIFEST & BATCHES records slightly out of sync.
+        # So.... what if we go ahead and UPDATE the MANIFEST anyhow,
+        # knowing that we'll need to RE-UPDATE both of them once again confirmed to be PENDING_CHANGE?
+        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                accession_num,
+                                                True,
+                                                new_manifest_status,
+                                                new_subject_id)
 
+        # BATCHES NOTE: limit to the current self.batch_clause:
+        # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
         self.LocutusDBconnSession.execute('UPDATE {0} '\
                                         'SET phase_processed={1}, '\
                                         'subject_id=\'{2}\', '\
                                         'object_info_01=\'{3}\', object_info_02=\'{4}\', object_info_03=\'{5}\'  '\
                                         'WHERE accession_num=\'{6}\' '\
-                                        '    AND active '\
-                                        'AND phase_processed >= {1}'.format(
+                                        '    AND active {7} '\
+                                        'AND phase_processed >= {1} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         new_phase_processed,
                                         new_subject_id,
                                         new_object_info_01, new_object_info_02, new_object_info_03,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
 
 
     def reset_accession_phase_processed(self,
@@ -2054,14 +2518,18 @@ class OnPrem_Dicom:
             clear_deid_qc_cols = ',deid_qc_status=NULL, '\
                             'deid_qc_api_study_url=NULL, '\
                             'deid_qc_explorer_study_url=NULL '
+        # BATCHES NOTE: limit to the current self.batch_clause:
+        # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
         self.LocutusDBconnSession.execute('UPDATE {0} set phase_processed={1} '\
                                         '{2} '\
                                         'WHERE accession_num=\'{3}\' '\
-                                        '   AND active ;'.format(
+                                        '   AND active {4} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         MIN_PROCESSING_PHASE,
                                         clear_deid_qc_cols,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
 
 
     def set_accession_phase_processed(self,
@@ -2072,29 +2540,43 @@ class OnPrem_Dicom:
             # be sure to use the proper reset method:
             self.reset_accession_phase_processed(accession_num)
         else:
+            # BATCHES NOTE: limit to the current self.batch_clause:
+            # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+            # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
             self.LocutusDBconnSession.execute('UPDATE {0} set phase_processed={1} '\
                                         'WHERE accession_num=\'{2}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {3} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         phase_processed,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
 
 
     def set_accession_phase_processed_to_greatest(self,
                         accession_num,
                         great_test_phase_processed):
         # helper method to update ONLY the corresponding STATUS record for an accession_num:
+        # BATCHES NOTE: limit to the current self.batch_clause:
+        # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
         self.LocutusDBconnSession.execute('UPDATE {0} set phase_processed=greatest(phase_processed, {1}) '\
                                         'WHERE accession_num=\'{2}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {3} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         great_test_phase_processed,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
 
-
-    def preretire_accession(self,
-                        accession_num):
+    ##############################################################################
+    # TODO: combine Settings:retire_accession*() & De-ID:preretire_accession*()
+    # incl their sub-methods, (pre)retire_accession_[status/manifest]_only()
+    # for a single centralized set of methods to maintain.
+    # NOTE: that unline the full Summarizer:retire_accession(), this De-ID:preretire_accession()
+    # does NOT do a full retire of its STATUS record, nor preretire_change_status_only():
+    ##############################################################################
+    def preretire_accession(self, accession_num):
         # helper method to update and retire ALL corresponding MANIFEST and STATUS records for an accession_num:
+        # DONE: consider removing batch_only & batch_name from this method's parameters, now that using self.batch_clause
         self.preretire_accession_manifest_only(accession_num)
         self.reset_accession_phase_processed(accession_num)
 
@@ -2102,188 +2584,216 @@ class OnPrem_Dicom:
     def predelete_accession(self,
                             accession_num):
         # helper method to update and delete corresponding records for an accession_num:
+        # BATCHES NOTE: limit to the current self.batch_clause:
         self.LocutusDBconnSession.execute('DELETE FROM {0} '\
                                         'WHERE accession_num=\'{1}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {2} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
+        # BATCHES NOTE: limit to the current self.batch_clause:
+        # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
         self.LocutusDBconnSession.execute('UPDATE {0} set phase_processed={1} '\
                                         'WHERE accession_num=\'{2}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {3} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         MIN_PROCESSING_PHASE,
-                                        accession_num))
+                                        accession_num,
+                                        self.batch_clause))
 
 
     def Setup_Input_Manifest(self, run_iteration_num):
-        ###################################
-        # setup ONPREM-DICOM DICOM input manifest CSV:
-        print('{0}.Setup_Input_Manifest(): Opening Locutus ONPREM-DICOM input DICOM Manifest CSV = {1}!'.format(
-                                CLASS_PRINTNAME,
-                                self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV),
-                                flush=True)
-        self.manifest_infile = open(self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV, 'r')
-        self.manifest_reader = csv.reader(self.manifest_infile, delimiter=',')
-        # ensure that the input CSV headers are as expected:
-        csv_headings_row = next(self.manifest_reader)
-        while len(csv_headings_row) == 0 or \
-                (not any(field.strip() for field in csv_headings_row)) or \
-                csv_headings_row[0] == '' or \
-                csv_headings_row[0][0] == '#':
-            # read across any blank manifest lines (or lines with only blank fields, OR lines starting with a comment, '#'):
-            print('{0}.Setup_Input_Manifest(): ignoring input manifest header line of "{1}"'.format(CLASS_PRINTNAME, csv_headings_row), flush=True)
-            if MANIFEST_OUTPUT_INCLUDE_COMMENT_LINES:
-                # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
-                # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
-                #if self.locutus_settings.LOCUTUS_VERBOSE:
-                print('{0},{1}'.format(
-                            MANIFEST_OUTPUT_PREFIX,
-                            ','.join(csv_headings_row)),
-                            flush=True)
-            csv_headings_row = next(self.manifest_reader)
-        print('{0}.Setup_Input_Manifest(): parsing input manifest header line of "{1}"'.format(CLASS_PRINTNAME, csv_headings_row), flush=True)
-        # TODO: rather than hardcoding the following CSV field #s, consider creating a dictionary:
-        csv_header0 = csv_headings_row[0].strip().upper() if (len(csv_headings_row) >= 1) else ''
-        csv_header1 = csv_headings_row[1].strip().upper() if (len(csv_headings_row) >= 2) else ''
-        csv_header2 = csv_headings_row[2].strip().upper() if (len(csv_headings_row) >= 3) else ''
-        csv_header3 = csv_headings_row[3].strip().upper() if (len(csv_headings_row) >= 4) else ''
-        csv_header4 = csv_headings_row[4].strip().upper() if (len(csv_headings_row) >= 5) else ''
-        csv_header5 = csv_headings_row[5].strip().upper() if (len(csv_headings_row) >= 6) else ''
-        ###
-        # NOTE: keeping the final header field as lower case, to highlight it as a data-less version header
-        # NOPE! time to open up the case insensitivity for the manifest_ver after all,
-        # to support streamlined re-use of output manifests from the Summarizer, AS-IS.
-        ###
-        #WAS: csv_header6 = csv_headings_row[6].strip().lower() if (len(csv_headings_row) >= 7) else ''
-        csv_header6 = csv_headings_row[6].strip().upper() if (len(csv_headings_row) >= 7) else ''
-        ###
-        if ((len(csv_headings_row) < MANIFEST_NUM_HEADERS) or
-            (csv_header0 != MANIFEST_HEADER_SUBJECT_ID) or
-            (csv_header1 != MANIFEST_HEADER_OBJECT_INFO_01) or
-            (csv_header2 != MANIFEST_HEADER_OBJECT_INFO_02) or
-            (csv_header3 != MANIFEST_HEADER_OBJECT_INFO_03) or
-            (csv_header4 != MANIFEST_HEADER_ACCESSION_NUM) or
-            (csv_header5 != MANIFEST_HEADER_DEID_QC_STATUS) or
-            (csv_header6 != MANIFEST_HEADER_MANIFEST_VER.upper())):
-            print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV headers (\'{1}\', \'{2}\', \'{3}\', \'{4}\', \'{5}\', \'{6}\', \'{7}\') '\
-                                'for {8} do NOT match those expected (\'{9}\', \'{10}\', \'{11}\', \'{12}\', \'{13}\', \'{14}\', \'{15}\')!'.format(
-                                CLASS_PRINTNAME,
-                                csv_header0,
-                                csv_header1,
-                                csv_header2,
-                                csv_header3,
-                                csv_header4,
-                                csv_header5,
-                                csv_header6,
-                                self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
-                                MANIFEST_HEADER_SUBJECT_ID,
-                                MANIFEST_HEADER_OBJECT_INFO_01,
-                                MANIFEST_HEADER_OBJECT_INFO_02,
-                                MANIFEST_HEADER_OBJECT_INFO_03,
-                                MANIFEST_HEADER_ACCESSION_NUM,
-                                MANIFEST_HEADER_DEID_QC_STATUS,
-                                MANIFEST_HEADER_MANIFEST_VER.upper()),
-                                flush=True)
-            #########
-            # NOTE: Add further info around non-compliant manifest headers
-            # to help better clarify  ambiguous errors such as:
-            # #######
-            # ONPREM_Dicom.Setup(): Opening Locutus input DICOM Manifest CSV = onprem_dicom_images_manifest.csv!
-            # ONPREM_Dicom.Setup(): parsing input manifest header line of "['subject_id', 'imaging_type', 'age_at_imaging_(days)\t', 'anatomical_position', 'accession_number', 'locutus_manifest_ver:locutus.onprem_dicom.2020july20']"
-            # ONPREM_Dicom.Setup(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV headers ('SUBJECT_ID', 'IMAGING_TYPE', 'AGE_AT_IMAGING_(DAYS)', 'ANATOMICAL_POSITION', 'ACCESSION_NUMBER', 'locutus_manifest_ver:locutus.onprem_dicom.2020july20') for onprem_dicom_images_manifest.csv do NOT match those expected ('SUBJECT_ID', 'IMAGING_TYPE', 'AGE_AT_IMAGING_(DAYS)', 'ANATOMICAL_POSITION', 'ACCESSION_NUM', 'locutus_manifest_ver:locutus.onprem_dicom.2020july20')!
-            # #######
-            # In addition to the above, aim to also highlight the particularly non-compliant headers, even if so simply as:
-            #########
-            if (len(csv_headings_row) < MANIFEST_NUM_HEADERS):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV number of headers ({1}) is not at least that expected ({2})'.format(
-                    CLASS_PRINTNAME, len(csv_headings_row), MANIFEST_NUM_HEADERS), flush=True)
-            if (csv_header0 != MANIFEST_HEADER_SUBJECT_ID):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV subject_id header (`{1}`) is not as expected (`{2}`)'.format(
-                    CLASS_PRINTNAME, csv_header0, MANIFEST_HEADER_SUBJECT_ID), flush=True)
-            if (csv_header1 != MANIFEST_HEADER_OBJECT_INFO_01):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV object_info_01 header (`{1}`) is not as expected (`{2}`)'.format(
-                    CLASS_PRINTNAME, csv_header1, MANIFEST_HEADER_OBJECT_INFO_01), flush=True)
-            if (csv_header2 != MANIFEST_HEADER_OBJECT_INFO_02):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV object_info_02 header (`{1}`) is not as expected (`{2}`)'.format(
-                    CLASS_PRINTNAME, csv_header2, MANIFEST_HEADER_OBJECT_INFO_02), flush=True)
-            if (csv_header3 != MANIFEST_HEADER_OBJECT_INFO_03):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV object_info_03 header (`{1}`) is not as expected (`{2}`)'.format(
-                    CLASS_PRINTNAME, csv_header3, MANIFEST_HEADER_OBJECT_INFO_03), flush=True)
-            if (csv_header4 != MANIFEST_HEADER_ACCESSION_NUM):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV accession_number header (`{1}`) is not as expected (`{2}`)'.format(
-                    CLASS_PRINTNAME, csv_header4, MANIFEST_HEADER_ACCESSION_NUM), flush=True)
-            if (csv_header5 != MANIFEST_HEADER_DEID_QC_STATUS):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV deid_qc_status header (`{1}`) is not as expected (`{2}`)'.format(
-                    CLASS_PRINTNAME, csv_header5, MANIFEST_HEADER_DEID_QC_STATUS), flush=True)
-            if (csv_header6 != MANIFEST_HEADER_MANIFEST_VER.upper()):
-                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV manifest_version header (`{1}`) is not as expected (`{2}`)'.format(
-                    CLASS_PRINTNAME, csv_header6, MANIFEST_HEADER_MANIFEST_VER.upper()), flush=True)
-            #########
-            # TODO: eventually also perhaps take all of the above possibilites
-            # and provide them to the below ValueError for appending?
-            # but first, close the current infile and DBconnSess...
-            #########
-            # 9/24/2024: NOTE: added these close() before the raise() (highlighting in case needing to alter):
-            self.manifest_infile.close()
-            self.LocutusDBconnSession.close()
-            self.StagerDBconnSession.close()
-            raise ValueError('Locutus {0}.Setup_Input_Manifest() ONPREM-DICOM input DICOM Manifest CSV headers (\'{1}\', \'{2}\', \'{3}\', \'{4}\', \'{5}\', \'{6}\', \'{7}\') '\
-                                'for {8} do NOT match those expected (\'{9}\', \'{10}\', \'{11}\', \'{12}\', \'{13}\', \'{14}\', \'{15}\')!'.format(
-                                CLASS_PRINTNAME,
-                                csv_header0,
-                                csv_header1,
-                                csv_header2,
-                                csv_header3,
-                                csv_header4,
-                                csv_header5,
-                                csv_header6,
-                                self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
-                                MANIFEST_HEADER_SUBJECT_ID,
-                                MANIFEST_HEADER_OBJECT_INFO_01,
-                                MANIFEST_HEADER_OBJECT_INFO_02,
-                                MANIFEST_HEADER_OBJECT_INFO_03,
-                                MANIFEST_HEADER_ACCESSION_NUM,
-                                MANIFEST_HEADER_DEID_QC_STATUS,
-                                MANIFEST_HEADER_MANIFEST_VER.upper() ))
+        # BATCHES NOTE: the Preloader can still use BATCH_NAME to load up a batch,
+        # even w/o LOCUTUS_BATCHES_ENABLE (now LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB)
+        # and these De-ID modules will likewise still filter by BATCH_NAME, even if loading via CSV.
 
-        if (self.locutus_settings.LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS):
-            # NOTE: optional MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL fields
-            # to follow MANIFEST_HEADER_MANIFEST_VER iff LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS:
-            csv_header7 = csv_headings_row[7].strip().upper() if (len(csv_headings_row) >= 8) else ''
-            csv_header8 = csv_headings_row[8].strip().upper() if (len(csv_headings_row) >= 9) else ''
+        if self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+            # BATCHES NOTE: alternate Setup() approach for manifest-once when NOT Preloading
 
-            if ((len(csv_headings_row) < MANIFEST_NUM_HEADERS_WITH_QC) or
-                (csv_header7 != MANIFEST_HEADER_OUTPUT_PROCESSED_STATUS) or
-                (csv_header8 != MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL)):
-                # TODO: add an additional check for the optional MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL field
-                # to follow MANIFEST_HEADER_MANIFEST_VER iff LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS
-                print('{0}.Setup_Input_Manifest(): ERROR: ADDITIONAL LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS '\
-                                'Manifest CSV headers of (\'{1}\', \'{2}\') '\
-                                'for {3} do NOT match those expected (\'{4}\', \'{5}\')!'.format(
-                                CLASS_PRINTNAME,
-                                csv_header7,
-                                csv_header8,
-                                self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
-                                MANIFEST_HEADER_OUTPUT_PROCESSED_STATUS,
-                                MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL),
-                                flush=True)
+            print('{0}.Setup(): Opening Locutus ONPREM-DICOM using BATCH \'{1}\' rather than a CSV!'.format(
+                                    CLASS_PRINTNAME,
+                                    self.locutus_settings.LOCUTUS_BATCH_NAME),
+                                    flush=True)
+
+            # BATCHES NOTE: for manifest-once Batch query in the Workspace via SQL:
+            # TODO: eventually add filtering to open_batch_cursor(), but first pass is for the entire batch:
+            # NOTE:MANIFEST_READER=part0ab-ALT-DB:
+            self.locutus_settings.open_batch_cursor(self.LocutusDBconnSession,
+                                                    src_modules.settings.DICOM_MODULE_ONPREM,
+                                                    LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE, self.locutus_settings.LOCUTUS_BATCH_NAME)
+
+        else:
+            # i.e., CSV, elif not self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+            ###################################
+            # setup ONPREM-DICOM DICOM input manifest CSV:
+            print('{0}.Setup_Input_Manifest(): Opening Locutus ONPREM-DICOM input DICOM Manifest CSV = {1}!'.format(
+                                    CLASS_PRINTNAME,
+                                    self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV),
+                                    flush=True)
+
+            # NOTE:MANIFEST_READER=part0ab-ALT-CSV:
+            self.locutus_settings.open_manifest_CSV(
+                                    src_modules.settings.DICOM_MODULE_ONPREM,
+                                    self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV)
+
+            # ensure that the input CSV headers are as expected:
+            # WAS: MANIFEST_READER=part1a:
+            # NOTE:MANIFEST_READER=part1a-ALT-CSV-headers:
+            csv_headings_row = self.locutus_settings.get_next_nontrivial_row_via_manifest_CSV()
+
+            print('{0}.Setup_Input_Manifest(): parsing input manifest header line of "{1}"'.format(CLASS_PRINTNAME, csv_headings_row), flush=True)
+            # TODO: rather than hardcoding the following CSV field #s, consider creating a dictionary:
+            csv_header0 = csv_headings_row[0].strip().upper() if (len(csv_headings_row) >= 1) else ''
+            csv_header1 = csv_headings_row[1].strip().upper() if (len(csv_headings_row) >= 2) else ''
+            csv_header2 = csv_headings_row[2].strip().upper() if (len(csv_headings_row) >= 3) else ''
+            csv_header3 = csv_headings_row[3].strip().upper() if (len(csv_headings_row) >= 4) else ''
+            csv_header4 = csv_headings_row[4].strip().upper() if (len(csv_headings_row) >= 5) else ''
+            csv_header5 = csv_headings_row[5].strip().upper() if (len(csv_headings_row) >= 6) else ''
+            ###
+            # NOTE: keeping the final header field as lower case, to highlight it as a data-less version header
+            # NOPE! time to open up the case insensitivity for the manifest_ver after all,
+            # to support streamlined re-use of output manifests from the Summarizer, AS-IS.
+            ###
+            #WAS: csv_header6 = csv_headings_row[6].strip().lower() if (len(csv_headings_row) >= 7) else ''
+            csv_header6 = csv_headings_row[6].strip().upper() if (len(csv_headings_row) >= 7) else ''
+            ###
+            if ((len(csv_headings_row) < MANIFEST_NUM_HEADERS) or
+                (csv_header0 != MANIFEST_HEADER_SUBJECT_ID) or
+                (csv_header1 != MANIFEST_HEADER_OBJECT_INFO_01) or
+                (csv_header2 != MANIFEST_HEADER_OBJECT_INFO_02) or
+                (csv_header3 != MANIFEST_HEADER_OBJECT_INFO_03) or
+                (csv_header4 != MANIFEST_HEADER_ACCESSION_NUM) or
+                (csv_header5 != MANIFEST_HEADER_DEID_QC_STATUS) or
+                (csv_header6 != MANIFEST_HEADER_MANIFEST_VER.upper())):
+                print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV headers (\'{1}\', \'{2}\', \'{3}\', \'{4}\', \'{5}\', \'{6}\', \'{7}\') '\
+                                    'for {8} do NOT match those expected (\'{9}\', \'{10}\', \'{11}\', \'{12}\', \'{13}\', \'{14}\', \'{15}\')!'.format(
+                                    CLASS_PRINTNAME,
+                                    csv_header0,
+                                    csv_header1,
+                                    csv_header2,
+                                    csv_header3,
+                                    csv_header4,
+                                    csv_header5,
+                                    csv_header6,
+                                    self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
+                                    MANIFEST_HEADER_SUBJECT_ID,
+                                    MANIFEST_HEADER_OBJECT_INFO_01,
+                                    MANIFEST_HEADER_OBJECT_INFO_02,
+                                    MANIFEST_HEADER_OBJECT_INFO_03,
+                                    MANIFEST_HEADER_ACCESSION_NUM,
+                                    MANIFEST_HEADER_DEID_QC_STATUS,
+                                    MANIFEST_HEADER_MANIFEST_VER.upper()),
+                                    flush=True)
                 #########
-                # TODO: eventually also perhaps take all of the above possibilites and provide them to the below ValueError for appending?
-                raise ValueError('Locutus {0}.Setup_Input_Manifest() ADDITIONAL LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS '\
-                                'Manifest CSV headers of (\'{1}\', \'{2}\') '\
-                                'for {3} do NOT match those expected (\'{4}\', \'{5}\')!'.format(
-                                CLASS_PRINTNAME,
-                                csv_header7,
-                                csv_header8,
-                                self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
-                                MANIFEST_HEADER_OUTPUT_PROCESSED_STATUS,
-                                MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL ))
+                # NOTE: Add further info around non-compliant manifest headers
+                # to help better clarify  ambiguous errors such as:
+                # #######
+                # ONPREM_Dicom.Setup(): Opening Locutus input DICOM Manifest CSV = onprem_dicom_images_manifest.csv!
+                # ONPREM_Dicom.Setup(): parsing input manifest header line of "['subject_id', 'imaging_type', 'age_at_imaging_(days)\t', 'anatomical_position', 'accession_number', 'locutus_manifest_ver:locutus.onprem_dicom.2020july20']"
+                # ONPREM_Dicom.Setup(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV headers ('SUBJECT_ID', 'IMAGING_TYPE', 'AGE_AT_IMAGING_(DAYS)', 'ANATOMICAL_POSITION', 'ACCESSION_NUMBER', 'locutus_manifest_ver:locutus.onprem_dicom.2020july20') for onprem_dicom_images_manifest.csv do NOT match those expected ('SUBJECT_ID', 'IMAGING_TYPE', 'AGE_AT_IMAGING_(DAYS)', 'ANATOMICAL_POSITION', 'ACCESSION_NUM', 'locutus_manifest_ver:locutus.onprem_dicom.2020july20')!
+                # #######
+                # In addition to the above, aim to also highlight the particularly non-compliant headers, even if so simply as:
+                #########
+                if (len(csv_headings_row) < MANIFEST_NUM_HEADERS):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV number of headers ({1}) is not at least that expected ({2})'.format(
+                        CLASS_PRINTNAME, len(csv_headings_row), MANIFEST_NUM_HEADERS), flush=True)
+                if (csv_header0 != MANIFEST_HEADER_SUBJECT_ID):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV subject_id header (`{1}`) is not as expected (`{2}`)'.format(
+                        CLASS_PRINTNAME, csv_header0, MANIFEST_HEADER_SUBJECT_ID), flush=True)
+                if (csv_header1 != MANIFEST_HEADER_OBJECT_INFO_01):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV object_info_01 header (`{1}`) is not as expected (`{2}`)'.format(
+                        CLASS_PRINTNAME, csv_header1, MANIFEST_HEADER_OBJECT_INFO_01), flush=True)
+                if (csv_header2 != MANIFEST_HEADER_OBJECT_INFO_02):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV object_info_02 header (`{1}`) is not as expected (`{2}`)'.format(
+                        CLASS_PRINTNAME, csv_header2, MANIFEST_HEADER_OBJECT_INFO_02), flush=True)
+                if (csv_header3 != MANIFEST_HEADER_OBJECT_INFO_03):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV object_info_03 header (`{1}`) is not as expected (`{2}`)'.format(
+                        CLASS_PRINTNAME, csv_header3, MANIFEST_HEADER_OBJECT_INFO_03), flush=True)
+                if (csv_header4 != MANIFEST_HEADER_ACCESSION_NUM):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV accession_number header (`{1}`) is not as expected (`{2}`)'.format(
+                        CLASS_PRINTNAME, csv_header4, MANIFEST_HEADER_ACCESSION_NUM), flush=True)
+                if (csv_header5 != MANIFEST_HEADER_DEID_QC_STATUS):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV deid_qc_status header (`{1}`) is not as expected (`{2}`)'.format(
+                        CLASS_PRINTNAME, csv_header5, MANIFEST_HEADER_DEID_QC_STATUS), flush=True)
+                if (csv_header6 != MANIFEST_HEADER_MANIFEST_VER.upper()):
+                    print('{0}.Setup_Input_Manifest(): ERROR: Locutus ONPREM-DICOM input DICOM Manifest CSV manifest_version header (`{1}`) is not as expected (`{2}`)'.format(
+                        CLASS_PRINTNAME, csv_header6, MANIFEST_HEADER_MANIFEST_VER.upper()), flush=True)
+                #########
+                # TODO: eventually also perhaps take all of the above possibilites
+                # and provide them to the below ValueError for appending?
+                # but first, close the current infile and DBconnSess...
+                #########
+                # 9/24/2024: NOTE: added these close() before the raise() (highlighting in case needing to alter):
+                #WAS: MANIFEST_READER=part0c:
+                if not self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+                    # NOTE:MANIFEST_READER=part0c-ALT-CSV:
+                    self.locutus_settings.close_manifest_CSV()
+                else:
+                    # NOTE:MANIFEST_READER=part0c-ALT-DB:
+                    self.locutus_settings.close_batch_cursor()
+                self.LocutusDBconnSession.close()
+                self.StagerDBconnSession.close()
+                raise ValueError('Locutus {0}.Setup_Input_Manifest() ONPREM-DICOM input DICOM Manifest CSV headers (\'{1}\', \'{2}\', \'{3}\', \'{4}\', \'{5}\', \'{6}\', \'{7}\') '\
+                                    'for {8} do NOT match those expected (\'{9}\', \'{10}\', \'{11}\', \'{12}\', \'{13}\', \'{14}\', \'{15}\')!'.format(
+                                    CLASS_PRINTNAME,
+                                    csv_header0,
+                                    csv_header1,
+                                    csv_header2,
+                                    csv_header3,
+                                    csv_header4,
+                                    csv_header5,
+                                    csv_header6,
+                                    self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
+                                    MANIFEST_HEADER_SUBJECT_ID,
+                                    MANIFEST_HEADER_OBJECT_INFO_01,
+                                    MANIFEST_HEADER_OBJECT_INFO_02,
+                                    MANIFEST_HEADER_OBJECT_INFO_03,
+                                    MANIFEST_HEADER_ACCESSION_NUM,
+                                    MANIFEST_HEADER_DEID_QC_STATUS,
+                                    MANIFEST_HEADER_MANIFEST_VER.upper() ))
 
-        print('{0}.Setup_Input_Manifest(): Using Locutus ONPREM-DICOM input DICOM Manifest CSV = {1}!'.format(
-                                CLASS_PRINTNAME,
-                                self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV),
-                                flush=True)
+            if (self.locutus_settings.LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS):
+                # NOTE: optional MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL fields
+                # to follow MANIFEST_HEADER_MANIFEST_VER iff LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS:
+                csv_header7 = csv_headings_row[7].strip().upper() if (len(csv_headings_row) >= 8) else ''
+                csv_header8 = csv_headings_row[8].strip().upper() if (len(csv_headings_row) >= 9) else ''
 
+                if ((len(csv_headings_row) < MANIFEST_NUM_HEADERS_WITH_QC) or
+                    (csv_header7 != MANIFEST_HEADER_OUTPUT_PROCESSED_STATUS) or
+                    (csv_header8 != MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL)):
+                    # TODO: add an additional check for the optional MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL field
+                    # to follow MANIFEST_HEADER_MANIFEST_VER iff LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS
+                    print('{0}.Setup_Input_Manifest(): ERROR: ADDITIONAL LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS '\
+                                    'Manifest CSV headers of (\'{1}\', \'{2}\') '\
+                                    'for {3} do NOT match those expected (\'{4}\', \'{5}\')!'.format(
+                                    CLASS_PRINTNAME,
+                                    csv_header7,
+                                    csv_header8,
+                                    self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
+                                    MANIFEST_HEADER_OUTPUT_PROCESSED_STATUS,
+                                    MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL),
+                                    flush=True)
+                    #########
+                    # TODO: eventually also perhaps take all of the above possibilites and provide them to the below ValueError for appending?
+                    raise ValueError('Locutus {0}.Setup_Input_Manifest() ADDITIONAL LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS '\
+                                    'Manifest CSV headers of (\'{1}\', \'{2}\') '\
+                                    'for {3} do NOT match those expected (\'{4}\', \'{5}\')!'.format(
+                                    CLASS_PRINTNAME,
+                                    csv_header7,
+                                    csv_header8,
+                                    self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV,
+                                    MANIFEST_HEADER_OUTPUT_PROCESSED_STATUS,
+                                    MANIFEST_HEADER_OUTPUT_DEID_QC_STUDY_URL ))
+
+            print('{0}.Setup_Input_Manifest(): Using Locutus ONPREM-DICOM input DICOM Manifest CSV = {1}!'.format(
+                                    CLASS_PRINTNAME,
+                                    self.locutus_settings.LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV),
+                                    flush=True)
+
+        #######################################################################################
+        # NOTE: regardless of self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+        #
         # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
         # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
         # TODO: will also want to eventually use the actual headers as provided, as we move towards support of a more dynamic manifest definition:
@@ -2334,6 +2844,128 @@ class OnPrem_Dicom:
                     MANIFEST_OUTPUT_PREFIX,
                     run_iteration_num),
                     flush=True)
+
+        #######################################
+        # TODO: consider a shared show_run_clues() kinda method to emit these tidbits,
+        # as just ^C/^V'd from the Summarizer:
+
+        # current Locutus APP_NAME:
+        print('{0},# APP_NAME:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    src_modules.settings.APP_NAME),
+                    flush=True)
+        # current Locutus APP_VERSION:
+        print('{0},# APP_VERSION:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    src_modules.settings.APP_VERSION),
+                    flush=True)
+        # active Locutus module to Summarize:
+        # DEV NOTE: varies from that of the Summarizer, hardcoded to this module:
+        print('{0},# MODULE:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    src_modules.settings.DICOM_MODULE_ONPREM.upper()),
+                    flush=True)
+
+        # active Workspace to Summarize:
+        print('{0},# WORKSPACES_ENABLED:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    self.locutus_settings.LOCUTUS_WORKSPACES_ENABLE),
+                    flush=True)
+        # active Workspace to Summarize:
+        print('{0},# WORKSPACE_NAME:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    self.locutus_settings.LOCUTUS_WORKSPACE_NAME),
+                    flush=True)
+        # active Workspace MANIFEST table to Summarize:
+        # DEV NOTE: varies from that of the Summarizer, hardcoded to this module's WS table pseudo-constants:
+        print('{0},# WORKSPACE_MANIFEST_TABLE:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
+                    flush=True)
+        # active Workspace STATUS table to Summarize:
+        # DEV NOTE: varies from that of the Summarizer, hardcoded to this module's WS table pseudo-constants:
+        print('{0},# WORKSPACE_STATUS_TABLE:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
+                    flush=True)
+
+        #######################################
+        # NOTE: add tally of workspace COUNT(DISTINCT(accession_num)) to better help confirm the correct Module & Workspace:
+        total_distinct_accessions_in_workspace = 0
+        # BATCHES NOTE: checking across all batches:
+        manifest_status_results = self.LocutusDBconnSession.execute('SELECT COUNT(DISTINCT(accession_num)) as num '\
+                                'FROM {0} '\
+                                'WHERE active ;'.format(
+                                LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
+        manifest_status_row = manifest_status_results.fetchone()
+        total_distinct_accessions_in_workspace = manifest_status_row['num']
+        #######################################
+
+        #######################################
+        # NOTE: add tally of workspace COUNT(DISTINCT(accession_num)),
+        # total counts in the current Workspace, to help debug unexpected results from the Summarizer:
+        ######
+        # NOTE:  workspace tally not as applicable to the De-ID modules:
+        # BUT STILL, go ahead and show it:
+        print('{0},# TOTAL_WORKSPACE_ACCESSIONS:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    total_distinct_accessions_in_workspace),
+                    flush=True)
+        #######################################
+
+        #######################################
+        # MANIFEST-ONCE:
+        # bypass Manifest CSV to instead Batch from DB into Summarize:
+        #WAS: print('{0},# BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:,{1}'.format(
+        print('{0},# LOAD_BATCH_FROM_DB_BYPASS_MANIFEST_CSV:,{1}'.format(
+                    MANIFEST_OUTPUT_PREFIX,
+                    self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB),
+                    flush=True)
+
+        # WAS: if self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+        # r3m0: DEBUG: TEST FORCE IT ANYHOW, since it seems that the BATCH_NAME is still used for the Summarizer even if NOT BYPASSED.
+        # So... Q: **if** NOT using the Preloader and NOT BYPASS_MANIFEST,
+        #           should BATCH_NAME be RESET back to the DEFAULT?
+        # OR..... at least WARN of it and potential confusion? OR..... what?????
+        if True:
+            # current Batch name to Summarize:
+            print('{0},# BATCH_NAME:,{1}'.format(
+                        MANIFEST_OUTPUT_PREFIX,
+                        self.locutus_settings.LOCUTUS_BATCH_NAME),
+                        flush=True)
+            ######
+            # NOTE: batch tally not as applicable to the De-ID modules:
+            # total counts in the BATCH of the current Workspace, to help debug unexpected results from the Summarizer:
+            # AND STILL, go ahead and show it:
+            total_distinct_accessions_in_batch = self.locutus_settings.batch_cursor_MAX_counter_unfiltered
+            print('{0},# {1}:,{2}'.format(
+                        MANIFEST_OUTPUT_PREFIX,
+                        MANIFEST_HEADER_ACCESSIONS_TOTAL_BATCH,
+                        total_distinct_accessions_in_batch),
+                        flush=True)
+            ######
+            # NEXT UP, the BATCH FILTER stuff, but only if set, either through the batch_cusror_clause_filter OR the filter_counter_from/to:
+            if self.locutus_settings.batch_cursor_clause_filter_only \
+            or self.locutus_settings.batch_filter_counter_from \
+            or self.locutus_settings.batch_filter_counter_to:
+                print('{0},# {1}:,{2}'.format(
+                        MANIFEST_OUTPUT_PREFIX,
+                        MANIFEST_HEADER_BATCH_FILTER,
+                        self.locutus_settings.batch_cursor_clause_filter_only),
+                        flush=True)
+                print('{0},# {1}:,{2}'.format(
+                        MANIFEST_OUTPUT_PREFIX,
+                        MANIFEST_HEADER_ACCESSIONS_FILTERED_BATCH,
+                        self.locutus_settings.batch_cursor_MAX_counter),
+                        flush=True)
+                print('{0},# {1}:,{2}:{3}'.format(
+                        MANIFEST_OUTPUT_PREFIX,
+                        MANIFEST_HEADER_BATCH_COUNTER_RANGE,
+                        self.locutus_settings.batch_filter_counter_from,
+                        self.locutus_settings.batch_filter_counter_to),
+                        flush=True)
+        #######################################
+
         ################
         # end of Setup_Input_Manifest()
 
@@ -2398,7 +3030,7 @@ class OnPrem_Dicom:
         # NOTE: support quick stdout log crumb of any additional CFGs for a CFG output CSV via: grep CFG_OUT
 
         if self.locutus_settings.LOCUTUS_ONPREM_DICOM_USE_ZIP_ARCHIVE_STRUCTURE:
-            # NOTE: UPDATE the active LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES for 'config_type' : 'cfg_dicom_download_ver':
+            # NOTE: update the active LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES for 'config_type' : 'cfg_dicom_download_ver':
             # to find the previous value as found through the following config_type=cfg_dicom_download_ver:
             intcfg_key_of_interest_type = 'config_type'
             intcfg_value_of_interest_type = 'cfg_dicom_download_ver'
@@ -2471,7 +3103,7 @@ class OnPrem_Dicom:
         #####
 
         if self.locutus_settings.LOCUTUS_ONPREM_DICOM_ANON_USE_ALIGNMENT_MODE_GCP:
-            # NOTE: UPDATE the active LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES for 'config_type' : 'cfg_dicom_anon_alignment_mode':
+            # NOTE: updatethe active LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES for 'config_type' : 'cfg_dicom_anon_alignment_mode':
             # to find the previous value as found through the following config_type=cfg_dicom_download_ver:
             intcfg_key_of_interest_type = 'config_type'
             intcfg_value_of_interest_type = 'cfg_dicom_anon_alignment_mode'
@@ -2602,7 +3234,8 @@ class OnPrem_Dicom:
                                     flush=True)
 
         # TODO: Q: is there a DISCONNECT that we need to use with Orthanc
-        # between each of the DICOM modules, ONPREM & GCP?
+        # between each of the DICOM modules?
+        # TODO: consider re-authenticate within the RestToolbox whenever accessing EITHER Orthanc:
         if self.locutus_settings.LOCUTUS_VERBOSE:
             print('{0}.Setup(): initially authenticating with src-Orthanc server...'.format(CLASS_PRINTNAME), flush=True)
         RestToolbox.SetCredentials(self.src_onprem_dicom_config['orthanc_user'],
@@ -2768,8 +3401,7 @@ class OnPrem_Dicom:
         self.LocutusDBconn = LocutusDBengine.connect()
         Session = sessionmaker(bind=self.LocutusDBconn, autocommit=True)
         self.LocutusDBconnSession = Session()
-        # NOTE: since the above new LocutusDBconnSession approach works in module_gcp_dicom.py,
-        # for preventing unexpected timeouts, then....
+        # NOTE: for preventing unexpected timeouts, then....
         # introducing this to the other Locutus modules as well (such as this!),
         # TODO: somebody complete with all the .close() calls, as paired with manifest_infiile.close(), wherever clever.
         #####
@@ -2779,7 +3411,7 @@ class OnPrem_Dicom:
         ###################################
         # NOTE: now AFTER the above LocutusDBconnSession part of Setup(),
         # since Setup_Input_Manifest() will close said connection upon failure (including mismatched headers)
-        # setup GCP-DICOM DICOM input manifest CSV:
+        # setup OnPrem-DICOM DICOM input manifest CSV:
         # with current iteration to be emitted in the commented header:
         run_iteration_num = 0
         self.Setup_Input_Manifest(run_iteration_num)
@@ -2832,6 +3464,39 @@ class OnPrem_Dicom:
         # and if not able to make it so, bailing and highlighting a bigger picture permissions issue anyhow.
         ######################################
 
+        ##########
+        # Samba SMB NOTE: internal infrastructure check for potential Samba filesystem,
+        # as denoted by a starting path of `//`, as in `//ressmbNUM...`
+        # Samba fileshares shall NOT be used for internal interim files due to the extra steps involved,
+        # ultimately needing an internal interim space anyhow; so, limit Samba to the TARGET_DEID:
+        if self.locutus_settings.LOCUTUS_ONPREM_DICOM_ZIP_DIR \
+        and self.locutus_settings.LOCUTUS_ONPREM_DICOM_ZIP_DIR[0:2]=='//':
+            samba_host_name = self.locutus_settings.LOCUTUS_ONPREM_DICOM_ZIP_DIR[0:self.locutus_settings.LOCUTUS_ONPREM_DICOM_ZIP_DIR.find('.')]
+            raise ValueError('Locutus {0}.Setup(): ERROR: LOCUTUS_ONPREM_DICOM_ZIP_DIR host path starts with: \'{1}\' '\
+                            'and seems to indicate a Samba mount for ZIP_DIR \'{2}\' ; '
+                            'Please, ONLY use such SMB mounts for final LOCUTUS_TARGET_USE_ISILON.'.format(
+                            CLASS_PRINTNAME,
+                            samba_host_name,
+                            self.locutus_settings.LOCUTUS_ONPREM_DICOM_ZIP_DIR))
+        ##########
+        # SMB NOTE: could combine these above ^^^ & vvv below checks for a shared raise, if needed.
+        ##########
+        ##########
+        # Samba SMB NOTE: internal infrastructure check for potential Samba filesystem,
+        # as denoted by a starting path of `//`, as in `//ressmbNUM...`
+        # Samba fileshares shall NOT be used for internal interim files due to the extra steps involved,
+        # ultimately needing an internal interim space anyhow; so, limit Samba to the TARGET_DEID:
+        if self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR \
+        and self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR[0:2]=='//':
+            samba_host_name = self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR[0:self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR.find('.')]
+            raise ValueError('Locutus {0}.Setup(): ERROR: LOCUTUS_ONPREM_DICOM_DEID_DIR host path starts with: \'{1}\' '\
+                            'and seems to indicate a Samba mount for DEID_DIR \'{2}\' ; '
+                            'Please, ONLY use such SMB mounts for final LOCUTUS_TARGET_USE_ISILON.'.format(
+                            CLASS_PRINTNAME,
+                            samba_host_name,
+                            self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR))
+        ##########
+
         if self.locutus_settings.LOCUTUS_VERBOSE:
             print('{0}.Setup(): Ensuring LOCUTUS_ONPREM_DICOM_ZIP_DIR exists as: {1}'.format(
                                     CLASS_PRINTNAME,
@@ -2854,6 +3519,12 @@ class OnPrem_Dicom:
                     PATH_DELIM,
                     curr_parent_dir),
                     flush=True)
+
+            #print('r3m0 DEBUG: Setup() B4a pre-while: curr_parent_dir={0}; next=os.listdir() attempt of it...'.format(curr_parent_dir), flush=True)
+            #print('r3m0 DEBUG: Setup() B4b while: curr_parent_dir={0}; NOT YET next=os.listdir() attempt of it...'.format(curr_parent_dir), flush=True)
+            #print('r3m0 DEBUG: Setup() b4 while: AND..... os.path.exists(curr_parent_dir)={0}'.format(os.path.exists(curr_parent_dir)), flush=True)
+            #print('r3m0 DEBUG: Setup() b4 while: AND..... os.path.isdir(curr_parent_dir)={0}'.format(os.path.isdir(curr_parent_dir)), flush=True)
+
             while curr_parent_dir and not os.path.exists(curr_parent_dir):
                 # as soon as we have to go up a full level, we can confirm absence of the expected zip dir:
                 zip_dir_exists = False
@@ -2865,6 +3536,9 @@ class OnPrem_Dicom:
                     next_parent_dir),
                     flush=True)
                 curr_parent_dir = next_parent_dir
+                #print('r3m0 DEBUG: Setup() END while: next_parent_dir={0}'.format(next_parent_dir), flush=True)
+                #print('r3m0 DEBUG: Setup() end while: AND..... os.path.exists(next_parent_dir)={0}'.format(os.path.exists(next_parent_dir)), flush=True)
+                #print('r3m0 DEBUG: Setup() end while: AND..... os.path.isdir(next_parent_dir)={0}'.format(os.path.isdir(next_parent_dir)), flush=True)
             if not curr_parent_dir:
                 # TODO: throw an exception for this this message?
                 print('{0}.Setup(): ERROR: LOCUTUS_ONPREM_DICOM_ZIP_DIR could not find even '\
@@ -2900,7 +3574,7 @@ class OnPrem_Dicom:
             ######################################
             #############################
             traceback_clues = traceback.format_exc()
-            print('{0}.Setup() ERROR DEBUG: suppressed os.makedirs() traceback MAY look like: {1}'.format(
+            print('{0}.Setup() ERROR DEBUG: suppressed makedirs() traceback MAY look like: {1}'.format(
                         CLASS_PRINTNAME,
                         traceback_clues), flush=True)
             #############################
@@ -2911,10 +3585,51 @@ class OnPrem_Dicom:
                     e),
                     flush=True)
                 # 9/24/2024: NOTE: added these close() before the raise() (highlighting in case needing to alter)":
-                self.manifest_infile.close()
+                #WAS: MANIFEST_READER=part0c:
+                if not self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+                    # NOTE:MANIFEST_READER=part0c-ALT-CSV:
+                    self.locutus_settings.close_manifest_CSV()
+                else:
+                    # NOTE:MANIFEST_READER=part0c-ALT-DB:
+                    self.locutus_settings.close_batch_cursor()
                 self.LocutusDBconnSession.close()
                 self.StagerDBconnSession.close()
                 raise
+
+        ###################################
+        # SMB NOTE: optional USE_ISILON TRiG Active Directory Service Account for isilon access, etc., as via Vault:
+        # NOTE: referenced from https://trigwiki.research.chop.edu/en/Servers/SMB
+        # NOTE: yes, this is specifically noted as SMB, a Sambra driver.
+        # That said, understanding that isilon drives can be loaded via either protocol,
+        # carry on to test whether or not this will work w/ trig_imaging currently configured as an NFS mount:
+        #    resnfs05.research.chop.edu:/trig_imaging  /mnt/isilon/trig_imaging
+        #
+        self.TRiG_SMB_server = None
+        self.TRiG_AD_SVC_user = None
+        self.TRiG_AD_SVC_pass = None
+        ##### ##### ##### ##### #####
+        if self.locutus_settings.LOCUTUS_TARGET_USE_ISILON \
+        and self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_IS_SAMBA:
+            # SAMBA server:
+            if self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_SAMBA_SERVER:
+                self.TRiG_SMB_server = self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_SAMBA_SERVER
+            # ActiveDirectory's AD SVC user:
+            if self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_USER_VAULT_PATH:
+                self.TRiG_AD_SVC_user = self.hvac_client.read(self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_USER_VAULT_PATH)['data']['value']
+            # ActiveDirectory's AD SVC password:
+            if self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_PASS_VAULT_PATH:
+                self.TRiG_AD_SVC_pass = self.hvac_client.read(self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_PASS_VAULT_PATH)['data']['value']
+            #####
+            # Samba SMB NOTE: TRiG_AD_SVC_user w/ @chop.edu qualifier:
+            self.TRiG_AD_SVC_user_atCHOP = self.TRiG_AD_SVC_user + '@chop.edu' #This is done because the service account user_name in vault does not contain the "@chop.edu"
+            print('{0}.Setup(): **NOW** registering TRiG AD SVC user +@chop.edu for LOCUTUS_TARGET_ISILON_PATH as: \'{1}\' for Samba server \'{2}\'...'.format(
+                                    CLASS_PRINTNAME,
+                                    self.TRiG_AD_SVC_user_atCHOP,
+                                    self.TRiG_SMB_server), flush=True)
+            smbclient.register_session(server=self.TRiG_SMB_server, username=self.TRiG_AD_SVC_user_atCHOP, password=self.TRiG_AD_SVC_pass)
+            ######
+        ##### ##### ##### ##### #####
+
 
         ######################
         # NOTE: even though config will remain in this class,
@@ -2951,29 +3666,44 @@ class OnPrem_Dicom:
 
         # PROGRESS BAR UPDATES via MANIFEST_STATUS:
         interim_manifest_status = 'PROCESSING_CHANGE_at_PHASE03'
+        # BATCHES NOTE: limit to the current self.batch_clause:
         self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                     'last_datetime_processed=now(), '\
                                     'manifest_status=\'{1}\' '\
                                     'WHERE accession_num=\'{2}\' '\
-                                    '    AND active ;'.format(
+                                    '    AND active {3} ;'.format(
                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                     interim_manifest_status,
-                                    curr_accession_num))
+                                    curr_accession_num,
+                                    self.batch_clause))
+        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                curr_accession_num,
+                                                True,
+                                                interim_manifest_status,
+                                                new_subject_id=None)
 
+        #################################################################
         # Processing Phase03a:
         # read this unprocessed uuid's max change_seq_id
         # from LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
         # SELECTing COALESCE(MAX(change_seq_id),0) across initial MIN_PROCESSING_PHASE,
         # NO LONGER: loading step towards consolidated/collapsed/compressed/aggregated via as_change_seq_id).
         # [See also: CHANGE-SEQUENCE CONSOLIDATION:]
+        # BATCHES NOTE: limit to the current self.batch_clause:
         max_change_result = self.LocutusDBconnSession.execute('SELECT COALESCE(MAX(change_seq_id),0) '\
                                                         'as max_seq_id FROM {0} '\
                                                         'WHERE phase_processed = {1} '\
                                                         'AND uuid=\'{2}\' '\
-                                                        '    AND active ;'.format(
+                                                        '    AND active {3} ;'.format(
                                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                         prev_phase_processed,
-                                                        curr_uuid))
+                                                        curr_uuid,
+                                                        self.batch_clause))
         max_change_row = max_change_result.fetchone()
         curr_uuid_max_change_seq_id = max_change_row['max_seq_id']
         if self.locutus_settings.LOCUTUS_VERBOSE:
@@ -2990,9 +3720,11 @@ class OnPrem_Dicom:
                         curr_uuid_max_change_seq_id),
                         flush=True)
 
+        #################################################################
         # Processing Phase03b:
         # Get the DICOMDir for this uuid, from STAGER_STABLESTUDY_TABLE:
         # NOTE: only need change_seq_id, but uuid also included for safety:
+        # BATCHES NOTE: no self.batch_clause with the Stager DB:
         staged_url_result = self.StagerDBconnSession.execute('SELECT url_dicomdir '\
                                                     'FROM {0} WHERE change_seq_id={1} '\
                                                     'AND uuid=\'{2}\' '\
@@ -3070,21 +3802,36 @@ class OnPrem_Dicom:
 
             # PROGRESS BAR UPDATES via MANIFEST_STATUS:
             interim_manifest_status = 'PROCESSING_CHANGE_at_PHASE03c_Downloading_from_Orthanc'
+            # BATCHES NOTE: limit to the current self.batch_clause:
             self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                         'last_datetime_processed=now(), '\
                                         'manifest_status=\'{1}\' '\
                                         'WHERE accession_num=\'{2}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {3} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                         interim_manifest_status,
-                                        curr_accession_num))
+                                        curr_accession_num,
+                                        self.batch_clause))
+            # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+            # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+            self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                curr_accession_num,
+                                                True,
+                                                interim_manifest_status,
+                                                new_subject_id=None)
 
             # TODO: consider re-authenticate within the RestToolbox whenever accessing EITHER Orthanc:
             if self.locutus_settings.LOCUTUS_VERBOSE:
                 print('{0}.Process(): PHASE03c: re-authenticating with src-Orthanc server...'.format(CLASS_PRINTNAME), flush=True)
             RestToolbox.SetCredentials(self.src_onprem_dicom_config['orthanc_user'],
                                         self.src_onprem_dicom_config['orthanc_password'])
+
             # and actually get the study URL from src-Orthanc:
+            if self.locutus_settings.LOCUTUS_VERBOSE:
+                print('{0}.Process(): PHASE03c: invoking RestToolbox.DoGet() for the src-Orthanc server...'.format(CLASS_PRINTNAME), flush=True)
             dicomdir_data = RestToolbox.DoGet(staged_url)
 
             nowtime = datetime.datetime.utcnow()
@@ -3129,13 +3876,23 @@ class OnPrem_Dicom:
 
             # Processing Phase03d:
             # continue the process on into unzipping the identified DICOM:
-            print('{0}.Process(): PHASE03d: unzipping dicom_dir {1} ...'.format(
+            print('{0}.Process(): PHASE03d: unzipping dicom_dir FROM {1} ...'.format(
                                         CLASS_PRINTNAME,
                                         dicomdir_zip_filename),
                                         flush=True)
-            zip_ref = ZipFile(dicomdir_zip_filename, 'r')
-            zip_ref.extractall(dicomdir_unzip_dirname)
-            zip_ref.close()
+
+            print('r3m0 DEBUG: about to os.makedirs({0})...'.format(dicomdir_unzip_dirname), flush=True)
+            os.makedirs(dicomdir_unzip_dirname)
+            print('{0}.Process(): file contents of BRAND NEW directory {1}: {2}'.format(
+                                CLASS_PRINTNAME,
+                                dicomdir_unzip_dirname,
+                                os.listdir(dicomdir_unzip_dirname)),
+                                flush=True)
+
+            with open(dicomdir_zip_filename, mode="rb") as dicomdir_zip_file:
+                zip_ref = ZipFile(dicomdir_zip_file, 'r')
+                zip_ref.extractall(path=dicomdir_unzip_dirname)
+                print('r3m0 DEBUG: just finished zip_ref.extractall(dicomdir_unzip_dirname={0}), about to close'.format(dicomdir_unzip_dirname), flush=True)
 
             if self.locutus_settings.LOCUTUS_VERBOSE:
                 print('{0}.Process(): PHASE03d: unzipped dicom_dir to: {1} ...'.format(
@@ -3201,6 +3958,9 @@ class OnPrem_Dicom:
             ###########
 
             # NOTE: no comma before {9} in the below, as it may NOT appear if int_cfg_status_update_fields_str is empty:
+            # BATCHES NOTE: limit to the current self.batch_clause:
+            # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+            # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
             self.LocutusDBconnSession.execute('UPDATE {0} '\
                                         'SET datetime_processed=now(), '\
                                         'phase_processed={1}, identified_local_path=\'{2}\', '\
@@ -3211,7 +3971,7 @@ class OnPrem_Dicom:
                                         'accession_num=\'{7}\' '\
                                         '{8} '\
                                         'WHERE change_seq_id={9} AND uuid=\'{10}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {11} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         (prev_phase_processed+1),
                                         curr_uuid_id_hostpath,
@@ -3222,7 +3982,8 @@ class OnPrem_Dicom:
                                         curr_accession_num,
                                         int_cfg_status_update_fields_str,
                                         curr_uuid_max_change_seq_id,
-                                        curr_uuid))
+                                        curr_uuid,
+                                        self.batch_clause))
 
             # and remove the zip file, as it is no longer needed:
             if not self.locutus_settings.LOCUTUS_KEEP_INTERIM_FILES:
@@ -3293,7 +4054,7 @@ class OnPrem_Dicom:
                     #######################
                     # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                     # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                    # NOTE: this is in both GCP and OnPrem modules (since OnPrem ^C/^V'd from GCP during its Level-Up)
+                    # NOTE: this is in the DICOM De-ID modules
                     #######################
                     # at least save some bits from the last exception into status:
                     safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -3316,14 +4077,26 @@ class OnPrem_Dicom:
                         manifest_status = 'ERROR_PHASE04via03=[{0}]'.format(err_desc)
                         print('DEBUG: =====>  r3m0: =====>  ERROR_PHASE04via03 manifest_status={0}'.format(manifest_status), flush=True)
 
+                    # BATCHES NOTE: limit to the current self.batch_clause:
                     self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                 'last_datetime_processed=now(), '\
                                                 'manifest_status=\'{1}\' '\
                                                 'WHERE accession_num=\'{2}\' '\
-                                                '    AND active ;'.format(
+                                                '    AND active {3} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                 manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
-                                                curr_accession_num))
+                                                curr_accession_num,
+                                                self.batch_clause))
+                    # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                    # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                    self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                    src_modules.settings.DICOM_MODULE_ONPREM,
+                                                    self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                    self.batch_clause,
+                                                    curr_accession_num,
+                                                    True,
+                                                    manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
+                                                    new_subject_id=None)
 
         nowtime = datetime.datetime.utcnow()
         print('@ {0} UTC: END of PHASE03 Accession# \'{1}\''.format(
@@ -3366,8 +4139,30 @@ class OnPrem_Dicom:
             self.remove_trailing_zeros(curr_accession_num)),
             flush=True)
 
-        curr_uuid_id_images_path = '[N/A:{0}]'.format(UNDER_REVIEW_STATUS)
+        # PROGRESS BAR UPDATES via MANIFEST_STATUS:
+        interim_manifest_status = 'PROCESSING_CHANGE_at_PHASE04'
+        # BATCHES NOTE: limit to the current self.batch_clause:
+        self.LocutusDBconnSession.execute('UPDATE {0} SET '\
+                                    'last_datetime_processed=now(), '\
+                                    'manifest_status=\'{1}\' '\
+                                    'WHERE accession_num=\'{2}\' '\
+                                    '    AND active {3} ;'.format(
+                                    LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
+                                    interim_manifest_status,
+                                    curr_accession_num,
+                                    self.batch_clause))
+        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                curr_accession_num,
+                                                True,
+                                                interim_manifest_status,
+                                                new_subject_id=None)
 
+        curr_uuid_id_images_path = '[N/A:{0}]'.format(UNDER_REVIEW_STATUS)
 
         # regardless of self.locutus_settings.LOCUTUS_ONPREM_DICOM_MANUAL_DEID_PAUSE4MANUAL_QC_DISABLE,
         # allow a first-pass through this Phase04 to use the curr_uuid_id_hostpath, if available:
@@ -3424,14 +4219,14 @@ class OnPrem_Dicom:
                         flush=True)
 
             #######
-            # NOTE: utilize a new variation of walk_and_redact_zip_archive_patient_study_levels(),
-            # to only walk and return patient_topdir via redact_subdirs=False:
+            # NOTE: utilize a new variation 2nd call of walk_and_redact_zip_archive_patient_study_levels(),
+            # to *ONLY* walk and return patient_topdir via redact_subdirs=False:
             #######
             patient_topdir = self.walk_and_redact_zip_archive_patient_study_levels(curr_uuid_id_images_path, enable_redact_subdirs=False)
             curr_uuid_id_images_path = patient_topdir
 
         if not errors_encountered:
-            # Phase04a = De-identification
+            # Phase04a = De-identification, to: locutus_onprem_dicom_deidentified_dir == LOCUTUS_ONPREM_DICOM_DEID_DIR
             deidentified_dirname = '{0}/uuid_{1}'.format(
                                         self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR, curr_uuid)
 
@@ -3440,14 +4235,17 @@ class OnPrem_Dicom:
             # With deidentified_dir_zip_filename being generated thereafter, though,
             # leaving dicom_anon to write to: LOCUTUS_ONPREM_DICOM_DEID_DIR
             # to subsequently zip it up to: LOCUTUS_TARGET_ISILON_PATH
+            #####
             #
             # In that manner, Phase04 can still remove all interim files, regardless.
             #
-            # NOTE: this does NOT yet take into account any of the intracies around the new QC stuff with either:
+            # NOTE: this does NOT yet take into account any of the intricacies around the new QC stuff with either:
             #   self.locutus_settings.LOCUTUS_ONPREM_DICOM_MANUAL_DEID_PAUSE4MANUAL_QC_DISABLE
             #   self.locutus_settings.LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS
 
+            ##### ##### ##### ##### #####
             # Get the patient+study info for this uuid to properly replace PatientsName/ID w/ subject_id:
+            # BATCHES NOTE: limit to the current self.batch_clause:
             patient_study_info_result = self.LocutusDBconnSession.execute('SELECT '\
                                                         'subject_id, object_info_01, '\
                                                         'object_info_02, object_info_03, '\
@@ -3456,10 +4254,11 @@ class OnPrem_Dicom:
                                                         'deid_qc_explorer_study_url '\
                                                         'FROM {0} WHERE change_seq_id={1} '\
                                                         'AND uuid=\'{2}\' '\
-                                                        '    AND active ;'.format(
+                                                        '    AND active {3} ;'.format(
                                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                         curr_uuid_change_seq_id,
-                                                        curr_uuid))
+                                                        curr_uuid,
+                                                        self.batch_clause))
             row = patient_study_info_result.fetchone()
             if row is None:
                 print('{0}.Process(): PHASE04: ERROR: found NO patient/study info '\
@@ -3467,7 +4266,7 @@ class OnPrem_Dicom:
                                 CLASS_PRINTNAME,
                                 curr_uuid_max_change_seq_id,
                                 curr_uuid,
-                                STAGER_STABLESTUDY_TABLE),
+                                LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
                                 flush=True)
                 # NOTE: return without any further updates or processing of this uuid:
                 errors_encountered += 1
@@ -3485,6 +4284,7 @@ class OnPrem_Dicom:
             curr_deid_qc_status = row['deid_qc_status']
             curr_deid_qc_api_study_url = row['deid_qc_api_study_url']
             curr_deid_qc_explorer_study_url = row['deid_qc_explorer_study_url']
+            ##### ##### ##### ##### #####
 
             # NOTE: may want a different replacement_patient_info, but here is an initial possibility, and...
             # TODO: consider the usefulness of having included the "..._via_{CLASS_PRINTNAME}" suffix.
@@ -3593,14 +4393,26 @@ class OnPrem_Dicom:
 
                 # PROGRESS BAR UPDATES via MANIFEST_STATUS:
                 interim_manifest_status = 'PROCESSING_CHANGE_at_PHASE04a_DeIDing_with_dicom-anon'
+                # BATCHES NOTE: limit to the current self.batch_clause:
                 self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                             'last_datetime_processed=now(), '\
                                             'manifest_status=\'{1}\' '\
                                             'WHERE accession_num=\'{2}\' '\
-                                            '    AND active ;'.format(
+                                            '    AND active {3} ;'.format(
                                             LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                             interim_manifest_status,
-                                            curr_accession_num))
+                                            curr_accession_num,
+                                            self.batch_clause))
+                # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                    src_modules.settings.DICOM_MODULE_ONPREM,
+                                                    self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                    self.batch_clause,
+                                                    curr_accession_num,
+                                                    True,
+                                                    interim_manifest_status,
+                                                    new_subject_id=None)
 
                 ######################################
                 # PRE-DELETE any anticipated OUTPUT from any already there.
@@ -3627,6 +4439,7 @@ class OnPrem_Dicom:
                 #   += with the possibility that the user has already added/modified contents of the UNZIPPED De-ID data in LOCUTUS_TARGET_ISILON_PATH,
                 #       it may very well be best to leave that to the user to manage, rather than to suprisingly wipe out something unexpected. :-(
                 ######################################
+
 
                 dicom_anon_Popen_args = [
                     'python3',
@@ -3714,8 +4527,6 @@ class OnPrem_Dicom:
                     errors_message2return += 'ERROR_PHASE04=[dicom_anon returned non-zero error code of {0}]'.format(proc.returncode)
 
                     ##### ##### ##### ##### #####
-                    # r3m0: NOTE:
-                    # code block #1 of such FORCE_SUCCESS, straight from GCP:
                     # TODO: read through and test this, then add other such FORCE_SUCCESS blocks
                     ##### ##### ##### ##### #####
                     # TODO: test on an accession with a legitimate dicom_anon Unexpected Value error.
@@ -3751,6 +4562,7 @@ class OnPrem_Dicom:
                             new_exception_msg),
                             flush=True)
                         # 9/24/2024: NOTE: added these close() before the raise() (highlighting in case needing to alter):
+                        # NOTE:MANIFEST_READER=part5a:COMMENTED:
                         #self.manifest_infile.close()
                         #self.LocutusDBconnSession.close()
                         #self.StagerDBconnSession.close()
@@ -3768,81 +4580,6 @@ class OnPrem_Dicom:
                     # Phase04b: RE-ZIP the de-id'd dir,
                     # for uploading to s3 as one file:
                     deidentified_dir_zip_filename = '{0}.zip'.format(deidentified_dirname)
-
-                    if self.locutus_settings.LOCUTUS_TARGET_USE_ISILON:
-                        # NOTE: could have mixed this in as an if/else, but nice to still have a LOCUTUS_ONPREM_DICOM_DEID_DIR default set above
-                        #
-                        # NOTE: if LOCUTUS_TARGET_ISILON_PATH is defined (whether or not any other targets are also defined),
-                        # could have run dicom_anon straight to it, bypassing the need for any subsequent copying.
-                        # With this deidentified_dir_zip_filename being generated thereafter, though,
-                        # leaving dicom_anon to write to: LOCUTUS_ONPREM_DICOM_DEID_DIR
-                        # to subsequently zip it up to: LOCUTUS_TARGET_ISILON_PATH
-                        #
-                        # NOTE: this does NOT yet take into account any of the intricacies around the new QC stuff with either:
-                        #   self.locutus_settings.LOCUTUS_ONPREM_DICOM_MANUAL_DEID_PAUSE4MANUAL_QC_DISABLE
-                        #   self.locutus_settings.LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS
-                        #
-                        # FROM Phase04a = De-identification
-                        #deidentified_dirname = '{0}/uuid_{1}'.format(
-                        #                            self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR, curr_uuid)
-
-                        # NOTE the NOTE:
-                        # NOTE: first, need to ensure that deidentified_dirname exists via a mkdir:
-                        if not os.path.exists(self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH):
-                            print('{0}.Process(): PHASE04b: making target isilon deid zip dir {1} ...'.format(
-                                        CLASS_PRINTNAME,
-                                        self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH),
-                                        flush=True)
-                            # Living bravely, not checking the mkdir output,
-                            # but..... it will be caught by the call to zip_deid_ref = ZipFile(, 'w')
-                            # still, TODO: check the os.mkdir() status ;-)
-                            os.makedirs(self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH)
-
-
-                        # AS INSPIRED BY the subsequent if self.locutus_settings.LOCUTUS_TARGET_USE_S3:
-                        #######
-                        # s3 keyname: <TOP_LEVEL>/<subject_id>/<object_info_01>/<object_info_02>/<object_info_03>/uuid_<uuid#>.zip
-                        # TODO: eventually expand to handle a dynamic number of object_infos, but for now:
-                        #s3_bucket_keyname = '{0}/{1}/{2}/{3}/{4}/uuid_{5}.zip'.format(
-                        #                self.locutus_settings.LOCUTUS_ONPREM_DICOM_BUCKET_PATH_TOP_LEVEL,
-                        #                curr_subject_id, curr_object_info_01,
-                        #                curr_object_info_02, curr_object_info_03, curr_uuid)
-                        #######
-                        # allow the OnPrem LOCUTUS_TARGET_ISILON_PATH a similar such subject subdir:
-                        #subject_subdir = '{0}_{1}_{2}_{3}'.format(
-                        #                curr_subject_id, curr_object_info_01,
-                        #                curr_object_info_02, curr_object_info_03)
-                        # OR, perhaps better for general sparse object_infos, with a primitive brute force concatentation of each:
-                        subject_subdir = '{0}'.format(curr_subject_id)
-                        if curr_object_info_01:
-                            subject_subdir += '_{0}'.format(curr_object_info_01)
-                        if curr_object_info_02:
-                            subject_subdir += '_{0}'.format(curr_object_info_02)
-                        if curr_object_info_03:
-                            subject_subdir += '_{0}'.format(curr_object_info_03)
-                        if self.locutus_settings.LOCUTUS_VERBOSE:
-                            print('{0}.Process(): Phase04b DeID zip using subject_subdir: {1}'.format(
-                                                    CLASS_PRINTNAME,
-                                                    subject_subdir),
-                                                    flush=True)
-
-                        deidentified_dir_zip_filename = '{0}/{1}/uuid_{2}.zip'.format(
-                            self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH,
-                            subject_subdir,
-                            curr_uuid)
-
-                        # NOTE: new and improved makedirs for the LOCUTUS_TARGET_ISILON_PATH:
-                        if self.locutus_settings.LOCUTUS_VERBOSE:
-                            print('{0}.Process(): Phase04b DeID zip Ensuring LOCUTUS_TARGET_ISILON_PATH exists as: {1}/{2}'.format(
-                                                    CLASS_PRINTNAME,
-                                                    self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH,
-                                                    subject_subdir),
-                                                    flush=True)
-                        try:
-                            os.makedirs(self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH+'/'+subject_subdir)
-                        except OSError as e:
-                            if e.errno != errno.EEXIST:
-                                raise
 
                     if self.locutus_settings.LOCUTUS_VERBOSE:
                         print('{0}.Process(): Phase04b DeID zip: creating de-ID zip={1}'.format(
@@ -3867,12 +4604,15 @@ class OnPrem_Dicom:
                             deidentified_dir_filepath = os.path.join(rootArchiveDirPath, fileName)
                             deidentified_arc_filename = deidentified_dir_filepath[len_deid_basedir :]
                             # NOTE: the following is too verbose for even the VERBOSE mode! ;-)
+                            #####
                             #if self.locutus_settings.LOCUTUS_VERBOSE:
                             #    print('{0}.Process(): Phase04b DeID zip: Adding to zip arcname={1} ....'.format(
                             #           CLASS_PRINTNAME,
                             #           deidentified_arc_filename),
                             #           flush=True)
+                            #####
                             zip_deid_ref.write(deidentified_dir_filepath, deidentified_arc_filename)
+                            # r3m0: TODO: also consider doing an ls -al of the resulting ZIP file, to confirm.
                     nowtime = datetime.datetime.utcnow()
                     print('@ {0} UTC: Re-ZIPPED {1} De-Identified DICOM image file(s)'.format(
                         nowtime,
@@ -3989,14 +4729,26 @@ class OnPrem_Dicom:
                         # is here such that any changes which are not fully processed
                         # from Phase03 and are resumed mid-way will also be updated:
                         manifest_status = UNDER_REVIEW_STATUS
+                        # BATCHES NOTE: limit to the current self.batch_clause:
                         self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'last_datetime_processed=now(), '\
                                                     'manifest_status=\'{1}\' '\
                                                     'WHERE accession_num=\'{2}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     manifest_status,
-                                                    curr_accession_num))
+                                                    curr_accession_num,
+                                                    self.batch_clause))
+                        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                        src_modules.settings.DICOM_MODULE_ONPREM,
+                                                        self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                        self.batch_clause,
+                                                        curr_accession_num,
+                                                        True,
+                                                        manifest_status,
+                                                        new_subject_id=None)
 
                         # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
                         # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
@@ -4125,6 +4877,9 @@ class OnPrem_Dicom:
                                                 curr_deid_qc_explorer_study_url)
 
                     # NOTE: no comma before {5} in the below, as it may NOT appear if int_cfg_status_update_fields_str is empty:
+                    # BATCHES NOTE: limit to the current self.batch_clause:
+                    # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+                    # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
                     self.LocutusDBconnSession.execute('UPDATE {0} SET {1} datetime_processed=now(), '\
                                                 'phase_processed={2}, '\
                                                 'deidentified_local_path=\'{3}\',{4} '\
@@ -4132,7 +4887,7 @@ class OnPrem_Dicom:
                                                 'WHERE phase_processed={6} '\
                                                 'AND change_seq_id={7} '\
                                                 'AND uuid=\'{8}\' '\
-                                                '    AND active ;'.format(
+                                                '    AND active {9} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                 update_interim_files_str,
                                                 next_prev_phase_processed,
@@ -4141,7 +4896,8 @@ class OnPrem_Dicom:
                                                 int_cfg_status_update_fields_str,
                                                 prev_phase_processed,
                                                 curr_uuid_change_seq_id,
-                                                curr_uuid))
+                                                curr_uuid,
+                                                self.batch_clause))
 
                     # And remove the identified zip file AND pre-zip DeID file
                     # as neither is needed any more:
@@ -4220,7 +4976,7 @@ class OnPrem_Dicom:
                     #######################
                     # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                     # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                    # NOTE: this is in both GCP and OnPrem modules (since OnPrem ^C/^V'd from GCP during its Level-Up)
+                    # NOTE: this is in the DICOM De-ID modules
                     #######################
                     # at least save some bits from the last exception into status:
                     safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -4243,14 +4999,26 @@ class OnPrem_Dicom:
                         manifest_status = 'ERROR_PHASE05via04=[{0}]'.format(err_desc)
                         print('DEBUG: =====>  r3m0: =====>  ERROR_PHASE04via03 manifest_status={0}'.format(manifest_status), flush=True)
 
+                    # BATCHES NOTE: limit to the current self.batch_clause:
                     self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                 'last_datetime_processed=now(), '\
                                                 'manifest_status=\'{1}\' '\
                                                 'WHERE accession_num=\'{2}\' '\
-                                                '    AND active ;'.format(
+                                                '    AND active {3} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                 manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
-                                                curr_accession_num))
+                                                curr_accession_num,
+                                                self.batch_clause))
+                    # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                    # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                    self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                    src_modules.settings.DICOM_MODULE_ONPREM,
+                                                    self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                    self.batch_clause,
+                                                    curr_accession_num,
+                                                    True,
+                                                    manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
+                                                    new_subject_id=None)
 
         nowtime = datetime.datetime.utcnow()
         print('@ {0} UTC: END of PHASE04 Accession# \'{1}\''.format(
@@ -4294,16 +5062,30 @@ class OnPrem_Dicom:
 
         # PROGRESS BAR UPDATES via MANIFEST_STATUS:
         interim_manifest_status = 'PROCESSING_CHANGE_at_PHASE05_UploadingToTargets'
+        # BATCHES NOTE: limit to the current self.batch_clause:
         self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                     'last_datetime_processed=now(), '\
                                     'manifest_status=\'{1}\' '\
                                     'WHERE accession_num=\'{2}\' '\
-                                    '    AND active ;'.format(
+                                    '    AND active {3} ;'.format(
                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                     interim_manifest_status,
-                                    curr_accession_num))
+                                    curr_accession_num,
+                                    self.batch_clause))
+        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                curr_accession_num,
+                                                True,
+                                                interim_manifest_status,
+                                                new_subject_id=None)
 
+        ##### ##### ##### ##### #####
         # Get the patient+study info for this uuid to properly name key for targets:
+        # BATCHES NOTE: limit to the current self.batch_clause:
         patient_study_info_result = self.LocutusDBconnSession.execute('SELECT '\
                                                     'subject_id, object_info_01, '\
                                                     'object_info_02, object_info_03, '\
@@ -4314,10 +5096,11 @@ class OnPrem_Dicom:
                                                     'deid_qc_explorer_study_url '\
                                                     'FROM {0} WHERE change_seq_id={1} '\
                                                     'AND uuid=\'{2}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                     curr_uuid_change_seq_id,
-                                                    curr_uuid))
+                                                    curr_uuid,
+                                                    self.batch_clause))
         row = patient_study_info_result.fetchone()
 
         internal_DEBUG_simulate_failed_phase05 = False
@@ -4338,7 +5121,7 @@ class OnPrem_Dicom:
                             CLASS_PRINTNAME,
                             curr_uuid_max_change_seq_id,
                             curr_uuid,
-                            STAGER_STABLESTUDY_TABLE),
+                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
                             flush=True)
             # NOTE: return without any further updates or processing of this uuid:
             errors_encountered += 1
@@ -4361,6 +5144,8 @@ class OnPrem_Dicom:
         curr_accession_num = row['accession_num']
         curr_deid_qc_status = row['deid_qc_status']
         curr_deid_qc_api_study_url = row['deid_qc_api_study_url']
+        ##### ##### ##### ##### #####
+
         curr_deid_qc_api_study_url4media = None
         if curr_deid_qc_api_study_url:
             curr_deid_qc_api_study_url4media = curr_deid_qc_api_study_url+"/media"
@@ -4500,8 +5285,7 @@ class OnPrem_Dicom:
                 # BUT - only append them onto the list of deidentified_targets IF not already previously listed.
 
             if self.locutus_settings.LOCUTUS_TARGET_USE_ISILON:
-                # NOTE: optimized for the dicom_anon output to go straight there already :-)
-                print('{0}.Process(): PHASE05-isilon: NO NEED for additional transfer \'{1}\' to target local isilon of \'{2}\' since dicom_anon output zipped up directly to it....'.format(
+                print('{0}.Process(): PHASE05-isilon: PREPPING to transfer curr_uuid_deid_zippath \'{1}\' to target local isilon of \'{2}\' since dicom_anon output zipped into LOCUTUS_ONPREM_DICOM_DEID_DIR....'.format(
                                     CLASS_PRINTNAME,
                                     curr_uuid_deid_zippath,
                                     self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH),
@@ -4509,6 +5293,105 @@ class OnPrem_Dicom:
 
                 # NOTE: to support listing multiple targets, build up an array for a single UPDATE after all of them:
                 this_targetname = curr_uuid_deid_zippath
+
+                ##### ##### ##### ##### #####
+                # AS INSPIRED BY the subsequent if self.locutus_settings.LOCUTUS_TARGET_USE_S3:
+                #######
+                # s3 keyname: <TOP_LEVEL>/<subject_id>/<object_info_01>/<object_info_02>/<object_info_03>/uuid_<uuid#>.zip
+                # TODO: eventually expand to handle a dynamic number of object_infos, but for now:
+                #s3_bucket_keyname = '{0}/{1}/{2}/{3}/{4}/uuid_{5}.zip'.format(
+                #                self.locutus_settings.LOCUTUS_ONPREM_DICOM_BUCKET_PATH_TOP_LEVEL,
+                #                curr_subject_id, curr_object_info_01,
+                #                curr_object_info_02, curr_object_info_03, curr_uuid)
+                #######
+                # allow the OnPrem LOCUTUS_TARGET_ISILON_PATH a similar such subject subdir:
+                #subject_subdir = '{0}_{1}_{2}_{3}'.format(
+                #                curr_subject_id, curr_object_info_01,
+                #                curr_object_info_02, curr_object_info_03)
+                # OR, perhaps better for general sparse object_infos, with a primitive brute force concatentation of each:
+                subject_subdir = '{0}'.format(curr_subject_id)
+                if curr_object_info_01:
+                    subject_subdir += '_{0}'.format(curr_object_info_01)
+                if curr_object_info_02:
+                    subject_subdir += '_{0}'.format(curr_object_info_02)
+                if curr_object_info_03:
+                    subject_subdir += '_{0}'.format(curr_object_info_03)
+                if self.locutus_settings.LOCUTUS_VERBOSE:
+                    print('{0}.Process(): PHASE05-isilon: DeID zip using subject_subdir: {1}'.format(
+                                            CLASS_PRINTNAME,
+                                            subject_subdir),
+                                            flush=True)
+                # NOTE: DEFAULT == deidentified_dir_zip_filename = '{0}.zip'.format(deidentified_dirname)
+                # BUT, for those ISILON bound, we'll follow the new zip filename, to include subject_subdir:
+                # NOTE: rather than using deidentified_dirname,
+                # reverting back to the LOCUTUS_ONPREM_DICOM_DEID_DIR from which it was derived:
+                # just use what was alreeady passed on to Phase05, namely:
+                #   curr_uuid_deid_zippath
+                # AND, create new target DIR:
+                # BUT FIRST, check if LOCUTUS_TARGET_ISILON_PATH already has a trailing path delimeter:
+                opt_mid_delim = ''
+                if self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH.rfind(PATH_DELIM) < len(self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH) -1:
+                    # NOTE: ONLY if not ALREADY trailing delimited [in which case rfind() == len() -1, and should be left w/ an empty opt_mid_delim]
+                    # and since this is NOT trailing delimited, add one between them:
+                    opt_mid_delim = PATH_DELIM
+                target_zipdir = '{0}{1}{2}'.format(
+                                        self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH,
+                                        opt_mid_delim,
+                                        subject_subdir)
+                this_targetname = '{0}/uuid_{1}.zip'.format(target_zipdir, curr_uuid)
+
+                # NOTE: new and improved makedirs for the LOCUTUS_TARGET_ISILON_PATH:
+                if self.locutus_settings.LOCUTUS_VERBOSE:
+                    #NOT: print('{0}.Process(): Phase04b DeID zip Ensuring LOCUTUS_TARGET_ISILON_PATH exists as: {1}/{2}'.format(
+                    #                        CLASS_PRINTNAME,
+                    #                        self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH,
+                    #                        subject_subdir),
+                    #                        flush=True)
+                    # BELOW was with: self.locutus_settings.LOCUTUS_ONPREM_DICOM_DEID_DIR, DISREGARDED potential change to: deidentified_dirname
+                    # SMB NOTE: BUT BUT BUT, no need to do so here in the TMP dir, save such a subject_subdir until Phase05:
+                    print('{0}.Process(): PHASE05-isilon: DeID zip Ensuring that a fresh LOCUTUS_TARGET_ISILON_PATH subject dir exists as: {1}'.format(
+                                            CLASS_PRINTNAME,
+                                            target_zipdir),
+                                            flush=True)
+
+                ##### ##### ##### ##### #####
+                try:
+                    if self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_IS_SAMBA:
+                        smbclient.makedirs(target_zipdir)
+                    else:
+                        os.makedirs(target_zipdir)
+                except OSError as e:
+                    # TODO: introduce print and safe exception handling
+                    if e.errno != errno.EEXIST:
+                        raise
+                ##### ##### ##### ##### #####
+
+                print('{0}.Process(): PHASE05-isilon: FROM curr_uuid_deid_zippath = \'{1}\' TO this_targetname = \'{2}\'.'.format(
+                    CLASS_PRINTNAME, curr_uuid_deid_zippath, this_targetname), flush=True)
+
+                ##### ##### ##### ##### #####
+                try:
+                    with open(curr_uuid_deid_zippath, "rb") as local_file:
+                        print('{0}.Process(): PHASE05-isilon: outer open() w/ local_file=curr_uuid_deid_zippath={1}...'.format(
+                            CLASS_PRINTNAME, curr_uuid_deid_zippath), flush=True)
+                        # SMB NOTE: omitting the username = smb_user, AND password = Settings.smb_pass since already registered, sweet?
+                        if self.locutus_settings.LOCUTUS_TARGET_ISILON_PATH_IS_SAMBA:
+                            with smbclient.open_file(this_targetname, mode='wb' ) \
+                            as remote_file:
+                                print('{0}.Process(): PHASE05-isilon-SMB:  CP to SMB-ISILON about to shutil.copyfileobj(local_file={1}, remote_file={2})...'.format(
+                                    CLASS_PRINTNAME, curr_uuid_deid_zippath, this_targetname), flush=True)
+                                shutil.copyfileobj(local_file, remote_file)
+                        else:
+                            # NO Samba target, can do a regular ol open():
+                            with open(this_targetname, 'wb') \
+                            as remote_file:
+                                print('{0}.Process(): PHASE05-isilon:  CP to ISILON (non-SMB) about to shutil.copyfileobj(local_file={1}, remote_file={2})...'.format(
+                                    CLASS_PRINTNAME, curr_uuid_deid_zippath, this_targetname), flush=True)
+                                shutil.copyfileobj(local_file, remote_file)
+                except Exception as e:
+                    # TODO: introduce print and safe exception handling
+                    raise
+                ##### ##### ##### ##### #####
 
                 # add this_targetname if not already listed in any previous deidentified_targets:
                 queuing_str = "NOT queuing an additional (already listed)"
@@ -4577,7 +5460,7 @@ class OnPrem_Dicom:
                     #######################
                     # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                     # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                    # NOTE: this is in both GCP and OnPrem modules (since OnPrem ^C/^V'd from GCP during its Level-Up)
+                    # NOTE: this is in the DICOM De-ID modules
                     #######################
                     # at least save some bits from the last exception into status:
                     safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -4812,6 +5695,9 @@ class OnPrem_Dicom:
                 # NOTE: no comma before {4} in the below, as it may NOT appear if int_cfg_status_update_fields_str is empty:
                 # TODO: ensure that we can just go ahead and set deid_qc_*_study_url=NULL below, that all has been processed
                 # either with a PASS:*, PASS_FROM_DEIDQC:*, or a FAIL:*
+                # BATCHES NOTE: limit to the current self.batch_clause:
+                # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+                # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
                 self.LocutusDBconnSession.execute('UPDATE {0} SET {1} datetime_processed=now(), '\
                                             'phase_processed={2}, '\
                                             'deid_qc_api_study_url=NULL, '\
@@ -4821,7 +5707,7 @@ class OnPrem_Dicom:
                                             'WHERE phase_processed={5} '\
                                             'AND change_seq_id={6} '\
                                             'AND uuid=\'{7}\' '\
-                                            '    AND active ;'.format(
+                                            '    AND active {8} ;'.format(
                                             LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                             update_interim_files_str,
                                             (prev_phase_processed+1),
@@ -4829,25 +5715,41 @@ class OnPrem_Dicom:
                                             int_cfg_status_update_fields_str,
                                             prev_phase_processed,
                                             curr_uuid_change_seq_id,
-                                            curr_uuid))
+                                            curr_uuid,
+                                            self.batch_clause))
 
                 # NOTE: overall LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE update of manifest_status='PROCESSED'
                 # is here such that any changes which are not fully processed
                 # from Phase03 and are resumed mid-way will also be updated:
                 manifest_status = 'PROCESSED'
+                # BATCHES NOTE: limit to the current self.batch_clause:
                 self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                             'last_datetime_processed=now(), '\
                                             'manifest_status=\'{1}\' '\
                                             'WHERE accession_num=\'{2}\' '\
-                                            '    AND active ;'.format(
+                                            '    AND active {3} ;'.format(
                                             LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                             manifest_status,
-                                            curr_accession_num))
+                                            curr_accession_num,
+                                            self.batch_clause))
+                # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                curr_accession_num,
+                                                True,
+                                                manifest_status,
+                                                new_subject_id=None)
 
                 # TODO: create a function for the following fw_session_import_arg, since now used in multiple places:
                 # NOTE: generate the helper column for downstream import into Flywheel via --session <age>d_<location>
-                # BEWARE: this is now also used in cmd_dicom_summarize_status.py
-                curr_fw_session_import_arg = '{0}d_{1}'.format(curr_object_info_02, curr_object_info_03)
+                # NOTE: BEWARE: curr_fw_session_import_arg is now also generated in cmd_dicom_summarize_status.py
+                #WAS: curr_fw_session_import_arg = '{0}d_{1}'.format(curr_object_info_02, curr_object_info_03)
+                curr_fw_session_import_arg = ''
+                if curr_object_info_02 or curr_object_info_03:
+                    curr_fw_session_import_arg = '{0}d_{1}'.format(curr_object_info_02, curr_object_info_03)
 
                 # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
                 # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
@@ -4884,8 +5786,7 @@ class OnPrem_Dicom:
 
                 # And remove the de-identified zip file, as it is no longer needed,
                 # so long as it wasn't part of the ISILON target:
-                if not self.locutus_settings.LOCUTUS_KEEP_INTERIM_FILES \
-                    and not self.locutus_settings.LOCUTUS_TARGET_USE_ISILON:
+                if not self.locutus_settings.LOCUTUS_KEEP_INTERIM_FILES:
                     os.remove(curr_uuid_deid_zippath)
 
                     # IF not manual_QC_disabled, Delete from ORTHANCDEID, as its own set of interim files:
@@ -4950,7 +5851,7 @@ class OnPrem_Dicom:
 
                 else:
                     print('DEBUG: {0}.Process(): PHASE05: '\
-                            'LOCUTUS_TARGET_USE_ISILON leaving the de-identified uuid zip == {1} '\
+                            'LOCUTUS_KEEP_INTERIM_FILES leaving the de-identified uuid zip == {1} '\
                             'for comparison!....'.format(
                             CLASS_PRINTNAME,
                             curr_uuid_deid_zippath),
@@ -4979,31 +5880,38 @@ class OnPrem_Dicom:
         alt_node_name=None
         check_module=False
         module_name=SYS_STAT_MODULENAME
-        (curr_sys_stat_overall, sys_msg_overall, sys_overall_name) = self.locutus_settings.get_Locutus_system_status(self.locutus_settings, check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
-        print('{0},{1},overall,{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "onprem_GET_LOCUTUS_SYS_STATUS", sys_overall_name, curr_sys_stat_overall, sys_msg_overall), flush=True)
+        (curr_sys_stat_overall, sys_msg_overall, sys_overall_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+        print('{0},{1},overall,{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_overall_name, curr_sys_stat_overall, sys_msg_overall), flush=True)
 
         # next, also check the node-level status that we'll ultimately use
         # (still checking even if the above overall active System Status is False, for completeness):
         check_Docker_node=True
-        (curr_sys_stat_node, sys_msg_node, sys_node_name) = self.locutus_settings.get_Locutus_system_status(self.locutus_settings, check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
-        print('{0},{1},node={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "onprem_GET_LOCUTUS_SYS_STATUS", sys_node_name, curr_sys_stat_node, sys_msg_node), flush=True)
+        (curr_sys_stat_node, sys_msg_node, sys_node_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+        print('{0},{1},node={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_node_name, curr_sys_stat_node, sys_msg_node), flush=True)
 
         # and then, also check the module-specific status that we'll also ultimately use
         # (still checking even if either of the above overall & node-level active System Status are False, for completeness):
         check_Docker_node=False
         check_module=True
         #print('r3m0 DEBUG: about to call get_Locutus_system_status with module_name={0}'.format(module_name), flush=True)
-        (curr_sys_stat_module, sys_msg_module, sys_module_name) = self.locutus_settings.get_Locutus_system_status(self.locutus_settings, check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
-        print('{0},{1},module={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "onprem_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_module, sys_msg_module), flush=True)
+        (curr_sys_stat_module, sys_msg_module, sys_module_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+        print('{0},{1},module={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_module, sys_msg_module), flush=True)
 
         # NOTE: bail here, as early as possible in Process(), if not active System Status
-        if (not curr_sys_stat_overall) or (not curr_sys_stat_node) or (not curr_sys_stat_module):
-            print('ERROR: OnPrem Process() found Locutus NOT active System Status for this module (status={0}), node (status={1}), or overall (status={2}); returning EARLY!'.format(
+        if (curr_sys_stat_node and curr_sys_stat_module and curr_sys_stat_overall):
+            print('OnPrem Process() confirms Locutus System Status is currently active for this node & module & overall.... carry on!')
+        else:
+            # i.e., if (not curr_sys_stat_overall) or (not curr_sys_stat_node) or (not curr_sys_stat_module):
+            print('FATAL ERROR: OnPrem Process() sees Locutus System Status is currently NOT active for '\
+                'this module (status={0}), node (status={1}), or overall (status={2}); returning EARLY!'.format(
                     curr_sys_stat_module, curr_sys_stat_node, curr_sys_stat_overall), flush=True)
             raise ValueError('OnPrem module found Locutus NOT active System Status: {0}'.format(sys_msg_node))
-            #print('r3m0 DEBUG: NOT YET raising that error, testing later in GCP....')
         #
         ###########
+
+        # BATCHES NOTE: now reference init's self.batch_clause rather than rebuilding it in multiple places:
+        # init a catchall exception message, just in case:
+        new_exception_msg = 'DEFAULT:NO_EXCEPTION_YET'
 
         this_run_has_fatal_errors = False
         total_errors_encountered = 0
@@ -5032,320 +5940,11 @@ class OnPrem_Dicom:
 
         # Processing Phase00:
         ###########################################################
-        if self.locutus_settings.LOCUTUS_VERBOSE:
-            print('{0}.Process(): Setting up Locutus-local tables for ONPREM DICOM '\
-                        'Status in {1} ...'.format(
-                        CLASS_PRINTNAME,
-                        self.locutus_settings.locutus_target_db_name),
-                        flush=True)
-
-        # WAS: in debugging the new Locutus Workspaces, AGAIN emit the generated workspace table names to the CFG_OUT:
-        #print('{0},onprem-dicom-workspace-DEBUG_REPEAT,{1},\"{2}\"'.format(src_modules.settings.CFG_OUT_PREFIX, "LOCUTUS_ONPREM_DICOM_STATUS_TABLE", LOCUTUS_ONPREM_DICOM_STATUS_TABLE), flush=True)
-        #print('{0},onprem-dicom-workspace-DEBUG_REPEAT,{1},\"{2}\"'.format(src_modules.settings.CFG_OUT_PREFIX, "LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE", LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE), flush=True)
-        #print('{0},onprem-dicom-workspace-DEBUG_REPEAT,{1},\"{2}\"'.format(src_modules.settings.CFG_OUT_PREFIX, "LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE", LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE), flush=True)
-        # NOTE: oops, initial approach in Setup is not updating the actual LOCUTUS_ONPREM_DICOM_*_TABLE #defines
-        # FIXED w/ globals.
-
-        if self.locutus_settings.LOCUTUS_DB_DROP_TABLES \
-            and not self.locutus_settings.LOCUTUS_TEST:
-            # NOTE: only drop the LOCUTUS tables which are directly applicable to ONPREM DICOM:
-            if self.locutus_settings.LOCUTUS_VERBOSE:
-                print('{0}.Process(): DROPPING existing Locutus-local ONPREM DICOM '\
-                        'tables since config LOCUTUS_DB_DROP_TABLES == {1}'.format(
-                        CLASS_PRINTNAME,
-                        self.locutus_settings.LOCUTUS_DB_DROP_TABLES),
-                        flush=True)
-            self.LocutusDBconnSession.execute('DROP TABLE if exists {0};'.format(LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
-            self.LocutusDBconnSession.execute('DROP TABLE if exists {0};'.format(LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE))
-        else:
-            if self.locutus_settings.LOCUTUS_VERBOSE:
-                print('{0}.Process(): NOT dropping existing tables since config '\
-                        'LOCUTUS_DB_DROP_TABLES == {1} and '\
-                        'LOCUTUS_TEST == {2}'.format(
-                        CLASS_PRINTNAME,
-                        self.locutus_settings.LOCUTUS_DB_DROP_TABLES,
-                        self.locutus_settings.LOCUTUS_TEST),
-                        flush=True)
-
-        # Create LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE:
-        print('{0}.Process(): About to CREATE TABLE, if not exists, LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE: {1}'.format(
-            CLASS_PRINTNAME,
-            LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE),
-            flush=True)
-        if not self.locutus_settings.LOCUTUS_TEST:
-            self.LocutusDBconnSession.execute('CREATE TABLE if not exists {0} ('\
-                                    'config_type text, '\
-                                    'config_version text, '\
-                                    'config_desc text, '\
-                                    'date_activated date, '\
-                                    'active boolean, '\
-                                    'at_phase int, '\
-                                    'status_field text '\
-                                    ');'.format(LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE))
-        # and immediately populate/update LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE
-        # with the currently active internal configuration versions:
-        self.set_active_internal_configs(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES)
-
-        # CFG_OUT_PREFIX for LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES:
-        # iterate through the list of dictionaries:
-        # NOTE: as moved from Setup to here into Process(),
-        #   immediately after Phase00 CREATE TABLE LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE
-        #   and its subsequent call to: self.set_active_internal_configs(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES
-        # to ensure that any latest ACTIVE-DB configs are taken into account.
-        # TODO: consider moving all modules' CREATE TABLE code snippets up into the respective Setup().
-        for idx_cfg, cfg_dict in enumerate(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES):
-            # and iterate through each key/value pair of each dictionary:
-            for idx_key, cfg_key in enumerate(cfg_dict.keys()):
-                print('{0},onprem-dicom-hardcoded,{1}-{2}-{3},\"{4}\"'.format(
-                            src_modules.settings.CFG_OUT_PREFIX,
-                            "INT_CFGS_ACTIVES",
-                            (idx_cfg+1),
-                            cfg_key,
-                            LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES[idx_cfg][cfg_key]), flush=True)
-
-
-        ############
-        # NOTE: dynamic addition into the BELOW LOCUTUS_ONPREM_DICOM_STATUS_TABLE
-        #   of each `status_field` from the LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES list of dictionaries.
-        int_cfg_status_fields_str = ''
-        if len(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES):
-            int_cfg_status_fields = self.generate_create_status_fields_for_internal_configs(LOCUTUS_ONPREM_DICOM_INT_CFGS_ACTIVES)
-            # NOTE: since this is an optional field, preface with a comma only since fields to add:
-            int_cfg_status_fields_str = ',{0}'.format(','.join(int_cfg_status_fields))
-
-        # TODO: consider where to also CREATE TABLE for initial self.locutus_settings.LOCUTUS_SYS_STATUS_TABLE
-        # though better would be in main_locutus(), though it doesn't yet have a DBconn
-
-        ####################
-        # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions with the STATUS table:
-        # NOTE: be sure to use LOWER to align with the postgres lower-case representation of tablename:
-        status_table_exists_results = self.LocutusDBconnSession.execute('SELECT EXISTS '\
-                                            '(SELECT FROM pg_tables WHERE schemaname = \'public\' '\
-                                            'AND tablename = LOWER(\'{0}\') );'.format(
-                                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
-        status_table_exists_results_row = status_table_exists_results.fetchone()
-        status_table_exists = status_table_exists_results_row['exists']
-
-        alter_status_table = False
-        if status_table_exists:
-            print('{0}.Process(): LOCUTUS_ONPREM_DICOM_STATUS_TABLE found at {1}, '\
-                    'checking for Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns.....'.format(
-                    CLASS_PRINTNAME,
-                    LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
-                    flush=True)
-            # NOTE: be sure to use LOWER to align with the postgres lower-case representation of table_name as well:
-            # FOLLOWING the alpha-numeric upgrade of Juneteenth 2025, deprecating accession_num_src as used in antiquated approach of SPLITS for multi-UUIDs....
-            status_table_acc_column_results = self.LocutusDBconnSession.execute('SELECT column_name, data_type '\
-                                                'FROM information_schema.columns '\
-                                                'WHERE table_name = LOWER(\'{0}\') '\
-                                                'AND column_name IN (\'accession_num\') '\
-                                                'ORDER BY column_name;'.format(
-                                                LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
-
-            status_table_acc_column_row = status_table_acc_column_results.fetchone()
-            # SHOULD be column #1 = accession_num, but no worries either way:
-            status_table_acc_column_row_colname = status_table_acc_column_row['column_name']
-            status_table_acc_column_row_datatype = status_table_acc_column_row['data_type']
-            if status_table_acc_column_row_datatype == 'numeric':
-                alter_status_table = True
-
-            #WAS: with prior accession_num_src, now deprecated from old SPLITS:
-            """
-            status_table_acc_column_row = status_table_acc_column_results.fetchone()
-            # SHOULD be column #2 = accession_num_src, but no worries either way:
-            status_table_acc_column_row_colname = status_table_acc_column_row['column_name']
-            status_table_acc_column_row_datatype = status_table_acc_column_row['data_type']
-            if status_table_acc_column_row_datatype == 'numeric':
-                # NOTE: flag to ALTER the STATUS table for later alteration:
-                # FIRST, a quick check for column consistency:
-                # WAS: WITH:      'but NOT this 2nd (accession_num_src) column! '\
-                if not alter_status_table:
-                    print('{0}.Process(): WARNING: found mid-UPGRADE conflict with {1}, '\
-                            'STATUS table already upgraded from numeric to alpha-numeric for 1st (accession_num) columns! '\
-                            'Upgrading it momentarily...'.format(
-                            CLASS_PRINTNAME,
-                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
-                            flush=True)
-                alter_status_table = True
-            """
-
-            if alter_status_table:
-                print('{0}.Process(): Altering LOCUTUS_ONPREM_DICOM_STATUS_TABLE {1} '\
-                    'with Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns now.'.format(
-                    CLASS_PRINTNAME,
-                    LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
-                    flush=True)
-                status_table_alter_results = self.LocutusDBconnSession.execute('ALTER TABLE {0}  '\
-                                'ALTER COLUMN accession_num TYPE TEXT ;'.format(
-                                LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
-                # AND be sure to truncate any trailing .000 left over from the conversion from NUMERIC(18,3)
-                status_table_alter_trunc_results = self.LocutusDBconnSession.execute('UPDATE {0}  '\
-                                'SET  accession_num=REPLACE(accession_num, \'.000\', \'\') '\
-                                'WHERE accession_num LIKE \'%.000\' ;'.format(
-                                LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
-            else:
-                print('{0}.Process(): INFO: STATUS table {1} already upgraded from numeric to alpha-numeric '\
-                        'through the Juneteenth 2025 Upgrade Path, YAY! '.format(
-                            CLASS_PRINTNAME,
-                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
-                            flush=True)
-
-        ####################
-        # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions with the MANIFEST table:
-        # NOTE: be sure to use LOWER to align with the postgres lower-case representation of tablename:
-        manifest_table_exists_results = self.LocutusDBconnSession.execute('SELECT EXISTS '\
-                                            '(SELECT FROM pg_tables WHERE schemaname = \'public\' '\
-                                            'AND tablename = LOWER(\'{0}\') );'.format(
-                                            LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE))
-        manifest_table_exists_results_row = manifest_table_exists_results.fetchone()
-        manifest_table_exists = manifest_table_exists_results_row['exists']
-
-        alter_manifest_table = False
-        if manifest_table_exists:
-            print('{0}.Process(): LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE found at {1}, '\
-                    'checking for Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num column.....'.format(
-                    CLASS_PRINTNAME,
-                    LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
-                    flush=True)
-            # NOTE: be sure to use LOWER to align with the postgres lower-case representation of table_name as well:
-            manifest_table_acc_column_results = self.LocutusDBconnSession.execute('SELECT column_name, data_type '\
-                                                'FROM information_schema.columns '\
-                                                'WHERE table_name = LOWER(\'{0}\') '\
-                                                'AND column_name IN (\'accession_num\') '\
-                                                'ORDER BY column_name;'.format(
-                                                LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE))
-
-            manifest_table_acc_column_row = manifest_table_acc_column_results.fetchone()
-            # SHOULD be column #1 = accession_num, but no worries either way:
-            manifest_table_acc_column_row_colname = manifest_table_acc_column_row['column_name']
-            manifest_table_acc_column_row_datatype = manifest_table_acc_column_row['data_type']
-            if manifest_table_acc_column_row_datatype == 'numeric' or manifest_table_acc_column_row_datatype== 'bigint':
-                # NOTE: flag to ALTER the MANIFEST table HERE for later alteration,
-                # BUT FIRST, a quick check on the previous alter_status, for consistency:
-                if not alter_status_table:
-                    print('{0}.Process(): WARNING: found mid-UPGRADE conflict with {1}, '\
-                            'STATUS table already upgraded from numeric to alpha-numeric accession_num columns, but NOT this MANIFEST table {2}! '\
-                            'Upgrading it momentarily...'.format(
-                            CLASS_PRINTNAME,
-                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                            LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
-                            flush=True)
-                alter_manifest_table = True
-            else:
-                # another quick check on the previous alter_status, for consistency:
-                if alter_status_table:
-                    print('{0}.Process(): WARNING: found mid-UPGRADE conflict with {1}, '\
-                            'STATUS table NEEDING upgrade from numeric to alpha-numeric accession_num columns, but NOT this MANIFEST table {2}! '.format(
-                            CLASS_PRINTNAME,
-                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                            LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
-                            flush=True)
-
-            if alter_manifest_table:
-                print('{0}.Process(): Altering LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE {1} '\
-                    'with Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num column now.'.format(
-                    CLASS_PRINTNAME,
-                    LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
-                    flush=True)
-                manifest_table_alter_results = self.LocutusDBconnSession.execute('ALTER TABLE {0}  '\
-                                'ALTER COLUMN accession_num TYPE TEXT;'.format(
-                                LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE))
-                # AND be sure to truncate any trailing .000 left over from the conversion from NUMERIC(18,3)
-                status_table_alter_trunc_results = self.LocutusDBconnSession.execute('UPDATE {0}  '\
-                                'SET  accession_num=REPLACE(accession_num, \'.000\', \'\') '\
-                                'WHERE accession_num LIKE \'%.000\' ;'.format(
-                                LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE))
-            else:
-                print('{0}.Process(): INFO: MANIFEST table {1} already upgraded from numeric to alpha-numeric '\
-                        'through the Juneteenth 2025 Upgrade Path, YAY! '.format(
-                            CLASS_PRINTNAME,
-                            LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
-                            flush=True)
-
-        if alter_status_table or alter_manifest_table or self.locutus_settings.LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION:
-            if self.locutus_settings.LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION:
-                print('{0}.Process(): because LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION={1},'\
-                    'will force a RE-UPGRADE of the Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns now.'.format(
-                    CLASS_PRINTNAME,
-                    self.locutus_settings.LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION),
-                    flush=True)
-            ####################
-            # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions:
-            # Now, do the automatic conversion for any of the existing Stager accessions with text accessions, as per...
-            # trig_dicom_staging=# select count(*) from dicom_stablestudies where text(accession_num) != accession_str;
-            print('{0}.Process(): Updating all STATUS_TABLE ({1}) & MANIFEST TABLE ({2}) accessions with Staged text '\
-                'with Juneteenth 2025 Upgrade from numeric to alpha-numeric accession_num columns now.'.format(
-                CLASS_PRINTNAME,
-                LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
-                flush=True)
-            self.upgrade_alphanum_accessions_for_Juneteenth(LOCUTUS_ONPREM_DICOM_STATUS_TABLE, LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE)
-
-        if not status_table_exists:
-            # Create LOCUTUS_ONPREM_DICOM_STATUS_TABLE:
-            print('{0}.Process(): About to CREATE TABLE LOCUTUS_ONPREM_DICOM_STATUS_TABLE: {1}'.format(
-                CLASS_PRINTNAME,
-                LOCUTUS_ONPREM_DICOM_STATUS_TABLE),
-                flush=True)
-            # NOTE: & no the "if not exists" clause isn't as needed with the above conditional
-            # NO LONGER: including an 'as_change_seq_id' for squashing multiple change_seq_ids on the same uuid:
-            # NOTE: no comma before {1} in the below, as it may NOT appear if int_cfg_status_fields_str is empty:
-            # NOTE: prior to Juneteenth 2025 Upgrade of MANIFEST TABLE accession_num + _num_src to TEXT,
-            #                       WAS: 'accession_num decimal(18,3), '\
-            #                       WAS: 'accession_num_src bigint, '\
-            # THEN, with the Juneteenth 2025 alpha-numeric upgrade,
-            #                       WAS: 'accession_num_src text, '\
-            # 6/19/2025: Added active, retiring the need for wacky accession math (accnum<0 or accstr[0]='-') to determine if retired
-            if not self.locutus_settings.LOCUTUS_TEST:
-                self.LocutusDBconnSession.execute('CREATE TABLE if not exists {0} ('\
-                                    'change_seq_id int, '\
-                                    'change_type text, '\
-                                    'uuid text, '\
-                                    'subject_id text, '\
-                                    'object_info_01 text, '\
-                                    'object_info_02 text, '\
-                                    'object_info_03 text, '\
-                                    'object_info_04 text, '\
-                                    'accession_num text, '\
-                                    'active boolean, '\
-                                    'src_orthanc_notes text, '\
-                                    'datetime_processed timestamp without time zone, '\
-                                    'phase_processed int, '\
-                                    'identified_local_path text, '\
-                                    'deidentified_local_path text, '\
-                                    'deidentified_targets text, '\
-                                    'deid_qc_status text, '\
-                                    'deid_qc_api_study_url text, '\
-                                    'deid_qc_explorer_study_url text '\
-                                    '{1}'
-                                    ');'.format(LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                                int_cfg_status_fields_str))
-
-        if not manifest_table_exists:
-            # Create LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE:
-            print('{0}.Process(): About to CREATE TABLE LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE: {1}'.format(
-                CLASS_PRINTNAME,
-                LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE),
-                flush=True)
-            # NOTE: & no the "if not exists" clause isn't as needed with the above conditional
-            # NOTE: prior to Juneteenth 2025 Upgrade of MANIFEST TABLE accession_num to TEXT,
-            #                       WAS: 'accession_num decimal(18,3), '\
-            # 6/19/2025: Added active, retiring the need for wacky accession math (accnum<0 or accstr[0]='-') to determine if retired
-            if not self.locutus_settings.LOCUTUS_TEST:
-                self.LocutusDBconnSession.execute('CREATE TABLE if not exists {0} ('\
-                                    'subject_id text, '\
-                                    'object_info_01 text, '\
-                                    'object_info_02 text, '\
-                                    'object_info_03 text, '\
-                                    'object_info_04 text, '\
-                                    'accession_num text, '\
-                                    'active boolean, '\
-                                    'last_datetime_processed timestamp without time zone, '\
-                                    'manifest_status text '\
-                                    ');'.format(LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE))
+        self.create_db_tables(self.LocutusDBconnSession, LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE, LOCUTUS_ONPREM_DICOM_STATUS_TABLE, LOCUTUS_ONPREM_DICOM_INT_CFGS_TABLE)
 
         # NOTE: Migration Safety Check Stop Gap for staged accessions w/ unanticipated NULL active flag:
         num_null_active_staged = 0
+        # BATCHES NOTE: no self.batch_clause with the Stager DB:
         null_active_staged_changes_result =  self.StagerDBconnSession.execute('SELECT COUNT(*) AS num_nulls'\
                                                                     '  FROM {0} '\
                                                                     '  WHERE active IS NULL'.format(
@@ -5384,13 +5983,22 @@ class OnPrem_Dicom:
         else:
             # Processing Phase01a: pre-Migration, part of it in regards to LOCUTUS_DICOM_BYPASS_MIGRATION
             ###########################################################
-            # load up lists of all change_seq_ids in the GCPDICOM_OUTPUT_STABLESTUDY_TABLE
-            # and those change_seq_ids already in: LOCUTUS_ONPREM_DICOM_STATUS_TABLE
+            # load up lists of all change_seq_ids in: LOCUTUS_ONPREM_DICOM_STATUS_TABLE
 
             print('{0}.Process(): -------------------------------------'.format(CLASS_PRINTNAME), flush=True)
             print('{0}.Process(): START of PHASE01: pre-Migrating for this batch...'.format(CLASS_PRINTNAME), flush=True)
+
+            #############################
+            # r3m0: DEV NOTE of 3/06/2026: encountered a Stager+Migrator edge-case issue,
+            # as further documented down below, at the start of # Migration Processing Phase02;
+            # one that warrants potential consideration to the swapping of this Phase01 & Phase02.
+            #
+            # For now, though, merely leaving these as is, since, ultimately,
+            # it does still work in this order.
+            #############################
+
             nowtime = datetime.datetime.utcnow()
-            print('@ {0} UTC: START of PHASE01 batch'.format(nowtime), flush=True)
+            print('@ {0} UTC: START of PHASE01a batch'.format(nowtime), flush=True)
 
             total_xtra_changes_removed = 0
 
@@ -5400,6 +6008,7 @@ class OnPrem_Dicom:
             # so as to align with the removal of as_change_seq_id, and as inspired by the new extra_changes_result, further below:
             #   extra_changes_result =  self.LocutusDBconnSession.execute('WITH temp_num_changes AS '\ [...] LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
             # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+            # BATCHES NOTE: no self.batch_clause with the Stager DB:
             staged_changes_result =  self.StagerDBconnSession.execute('WITH temp_max_stage_changes AS '\
                                                                         '(SELECT accession_num, uuid, '\
                                                                         '  MAX(change_seq_id) AS max_change_seq_id '
@@ -5427,8 +6036,13 @@ class OnPrem_Dicom:
 
             # limit to active (non-retired) accession_nums > 0 with change_seq_id > 0:
             # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
-            status_changes_result =  self.LocutusDBconnSession.execute('SELECT change_seq_id FROM {0} '\
+            # BATCHES NOTE: DISTINCT() eliminates need for self.batch_clause, since *should* be same across all batches;
+            #   still, go ahead and explicitly limit to batch_name IS NULL to focus on that default batch.
+            # BATCHES NOTE: Migrator shall only aim to maintain all the UUIDS for the default batch (batch_name IS NULL),
+            #   leaving to the Preloader's Propagator for further propagation of any new UUIDs into the specific batch_name of interest:
+            status_changes_result =  self.LocutusDBconnSession.execute('SELECT DISTINCT(change_seq_id) FROM {0} '\
                                 'WHERE active '\
+                                'AND batch_name IS NULL '\
                                 'order by change_seq_id ;'.format(
                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE))
             status_changes_list = []
@@ -5449,7 +6063,7 @@ class OnPrem_Dicom:
             possible_zombie_changes_list = [item for item in status_changes_list if item not in staged_changes_list]
             #print('{0}.Process(): PHASE01: WARNING: The current Locutus OnPrem workspace '\
             #            'status table ({1}) contains the following possible (including already retired!) '\
-            #            'zombie change_seq_ids no longer in the GCP DICOM STAGE: {2}'.format(
+            #            'zombie change_seq_ids no longer in the OnPrem DICOM STAGE: {2}'.format(
             #            CLASS_PRINTNAME,
             #            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
             #            possible_zombie_changes_list),
@@ -5504,7 +6118,94 @@ class OnPrem_Dicom:
                             CLASS_PRINTNAME,
                             curr_zombie_change_seq_id),
                             flush=True)
+
+                        ######################
+                        # NOTE: this is where *any* entire accession_num (that has been removed from the Stager)
+                        # will also be removed (preretired) from the STATUS table via preretire_change_status_only()
+                        # along with any accession's STATUS record change_seq_id < MAX(change_seq_id) of the Stager DB.
+                        # NOTE: this will NOT automatically retire any records in the MANIFEST table
+                        # (nor its corresponding records in the overall BATCHES table);
+                        # any such representations of accession in MANIFEST/BATCH will need to
+                        # await a next run of the Preloader cmd or De-ID module.....
+                        # UNLESS......
+                        ########
+                        # NOTE: prior to preretiring this change_seq_id from the STATUS table,
+                        # first gather its accession_num, and count of any other change_seq_ids
+                        # for subsequent update to the MANIFEST and BATCHES tables
+                        # (see below. at: "if status_num_accession_other_changes")
+                        ###
+                        # BATCHES NOTE: DISTINCT() eliminates need for self.batch_clause, since *should* be same across all batches:
+                        status_change_accession_result =  self.LocutusDBconnSession.execute('SELECT DISTINCT(accession_num) FROM {0} '\
+                                            'WHERE active '\
+                                            'AND change_seq_id = {1} ;'.format(
+                                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                                            curr_zombie_change_seq_id))
+                        status_change_accession_result_row = status_change_accession_result.fetchone()
+                        status_change_accession_num = status_change_accession_result_row['accession_num']
+                        ###
+                        # BATCHES NOTE: limit to the current self.batch_clause???
+                        # NOPE, adding DISTINCT():
+                        # BATCHES NOTE: DISTINCT() eliminates need for self.batch_clause, since *should* be same across all batches:
+                        status_num_accession_other_changes_result =  self.LocutusDBconnSession.execute('SELECT COUNT(DISTINCT(change_seq_id)) as num_other_changes FROM {0} '\
+                                            'WHERE active '\
+                                            'AND accession_num = \'{1}\' '\
+                                            'AND change_seq_id != {2} {3};'.format(
+                                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                                            status_change_accession_num,
+                                            curr_zombie_change_seq_id,
+                                            self.batch_clause))
+                        status_num_accession_other_changes_result_row = status_num_accession_other_changes_result.fetchone()
+                        status_num_accession_other_changes = status_num_accession_other_changes_result_row['num_other_changes']
+                        ######################
+
                         self.preretire_change_status_only(curr_zombie_change_seq_id)
+
+                        if status_num_accession_other_changes < 1:
+                            # if NO other changes for this accession, then update the MANIFEST and BATCHES tables
+                            # across ALL batches within that workspace MANIFEST / global BATCHES table
+
+                            # TODO: if potentially used elsewhere, create the following constant in Settings, etc.:
+                            # NOTE: this is NOT "retiring" (per se) either the MANIFEST or BATCHES records,
+                            # merely noting of their removal by the Migrator in case Summarized prior to another Preloader run:
+                            migrator_removed_status = 'MIGRATOR_REMOVED_ZOMBIE_PLEASE_RERUN_PRELOADER_TO_REFRESH'
+
+                            # first, update the Zombie'd manifest_status for this workspace's MANIFEST table:
+                            # BATCHES NOTE: doing so across ALL batches in the workspace????
+                            # BATCHES NOTE: limit to the current self.batch_clause:
+                            self.LocutusDBconnSession.execute('UPDATE {0} '\
+                                            'SET manifest_status=\'{1}\' '\
+                                            'WHERE accession_num=\'{2}\' '\
+                                            '    AND active {3} ;'.format(
+                                            LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
+                                            migrator_removed_status,
+                                            status_change_accession_num,
+                                            self.batch_clause))
+                            # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                            # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                            # BUT: NOTE: already done below, across ALL batches, leaving as is
+                            """ NOT YET:
+                            self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                status_change_accession_num,
+                                                True,
+                                                migrator_removed_status,
+                                                new_subject_id=None)
+                            """
+                            # and then, the Zombie'd manifest_status for the global Locutus BATCHES table:
+                            # BATCHES NOTE: doing so across ALL batches in the workspace????
+                            # BATCHES NOTE: limit to the current self.batch_clause:
+                            # r3m0:TODO: ===> USE the new method, to also ensure Workspace & Module are added
+                            self.LocutusDBconnSession.execute('UPDATE {0} '\
+                                            'SET manifest_status=\'{1}\' '\
+                                            'WHERE accession_num=\'{2}\' '\
+                                            '    AND active {3} ;'.format(
+                                            self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE,
+                                            migrator_removed_status,
+                                            status_change_accession_num,
+                                            self.batch_clause))
+
                         total_positive_zombie_changes_removed += 1
 
             print('{0}.Process(): -------------------------------------'.format(CLASS_PRINTNAME), flush=True)
@@ -5526,6 +6227,10 @@ class OnPrem_Dicom:
             # Migration Processing Phase01b-01:
             # == blanket removal of ALL older change_seq_ids (all but the latest change_seq_id for *any* UUID),
             #   prior to Phase02 migration of new changes, one UUID at a time.
+            #
+            # NOTE: this portion will ONLY clear out earlier/older change_seq_ids in STATUS, *not* entire accessions
+            # (see above zombie removal which tangentially addresses these via its: if status_num_accession_other_changes < 1:)
+            #
             # NOTE: see also subsequent Phase01b-02 per-UUID backup safety net in Phase02,
             # for any remaining extraneous per-UUID change_seq_ids that somehow got through.
             ###########################################################
@@ -5544,6 +6249,8 @@ class OnPrem_Dicom:
                         flush=True)
                 # NOTE: query a count of num_changes per grouped accession_num, uuid:
                 # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+                # BATCHES NOTE: do NOT limit to the current self.batch_clause, allow this to squash all earlier change_seq_ids:
+                # BATCHES NOTE: DISTINCT() eliminates need for self.batch_clause, since *should* be same across all batches:
                 extra_changes_result =  self.LocutusDBconnSession.execute('WITH temp_num_changes AS '\
                                                                             '(SELECT accession_num, uuid, '\
                                                                             '  MAX(change_seq_id) AS max_change_seq_id, '
@@ -5582,13 +6289,15 @@ class OnPrem_Dicom:
                     # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                     # lest previously (as above) retired versions of this trigger false multiples:
                     # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+                    # BATCHES NOTE: limit to the current self.batch_clause???
                     self.LocutusDBconnSession.execute('DELETE FROM {0} '\
                                                 'WHERE uuid=\'{1}\' '\
-                                                '    AND active '\
+                                                '    AND active {3} '\
                                                 'AND change_seq_id < {2} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                 curr_xtra_change_uuid,
-                                                curr_xtra_max_changeseqid))
+                                                curr_xtra_max_changeseqid,
+                                                self.batch_clause))
                     total_xtra_changes_removed += curr_xtra_change_num_changes-1
 
                 print('{0}.Process(): PHASE01b-01: pre-Migration cleared '\
@@ -5613,6 +6322,34 @@ class OnPrem_Dicom:
             nowtime = datetime.datetime.utcnow()
             print('@ {0} UTC: END of PHASE01 batch'.format(nowtime), flush=True)
 
+            #############################
+            # r3m0: DEV NOTE of 3/06/2026: encountered the following Stager+Migrator edge-case issue:
+            #
+            # With 2 changes in the Stager DB...
+            #   1) an earlier change (c1), which has already been Migrated and is now in the Locutus DB workspace,
+            #   2) a later change (c2), which has not yet been Migrated into the Locutus DB, but is
+            #       for the same accession as c1, and therefore supercedes c1 as the latest Stager change_seq_id.
+            #
+            # The Phase01 Migrator code is designed to find any potential Zombies such as (c1),
+            #   i.e., those change_seq_ids already in the Locutus DB,
+            #   but no longer the latest change_seq_id in the Stager DBfor for any accession.
+            #
+            # Unfortunately, with Phase01 PRIOR to the following Phase02 portion of the Migrator,
+            # the latter change, (c2), isn't yet in the Locutus DB, and (c1) will simply be removed.
+            # All in all, that WILL indeed work (especially now that some Phase01 code has been fixed for it!)
+            #
+            # TODO: =====> Considering moving THIS Phase02 UP above the currrent Phase01
+            # to ensure that new change_seq_id additions are in place FIRST, PRIOR TO any attenpts
+            # to cull earlier change_seq_ids that have been deemed by the Migrator as Zombies from the Stager DB
+            # (even if not yet Migrated into this Locutus DB workspace).
+            #
+            # ALTERNATE NOTE: could instead consider something like:
+            #   status_table_max_changeseqid = SELECT COALESCE(MAX(change_seq_id),0) ... FROM STATUS
+            # and enhancing the Stager Zombie detection to only look for such change_seq_ids <= status_table_max_changeseqid
+            #
+            # For now, though, merely leaving these as is, since, ultimately,
+            # it does still work in this order.
+            #############################
 
             # Migration Processing Phase02:
             ###########################################################
@@ -5650,7 +6387,7 @@ class OnPrem_Dicom:
             total_xtra_changes_removed = 0
             total_xtra_changes_NOTYET_removed = 0
             for needed_change_id in changes_needing_migrating_list:
-
+                # BATCHES NOTE: no self.batch_clause for Stager DB:
                 staged_change_result = self.StagerDBconnSession.execute('SELECT change_seq_id, '\
                                                                     'uuid, change_type, '\
                                                                     'accession_num, '\
@@ -5700,14 +6437,16 @@ class OnPrem_Dicom:
                     # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                     # lest previously (as above) retired versions of this trigger false multiples:
                     # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+                    # BATCHES NOTE: limit to the current self.batch_clause:
                     existing_changes_for_uuid_result =  self.LocutusDBconnSession.execute('SELECT '\
                                         'count(distinct(change_seq_id)) as num_changes, '\
                                         'max(distinct(change_seq_id)) as max_changeseqid '\
                                         'FROM {0} '\
                                         'WHERE uuid=\'{1}\' '\
-                                        '    AND active ;'.format(
+                                        '    AND active {2} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                        staged_uuid))
+                                        staged_uuid,
+                                        self.batch_clause))
                     existing_changes_for_uuid_row = existing_changes_for_uuid_result.fetchone()
                     num_locutus_changes_for_uuid = existing_changes_for_uuid_row['num_changes']
                     max_locutus_changeseqid_for_uuid = existing_changes_for_uuid_row['max_changeseqid']
@@ -5729,17 +6468,19 @@ class OnPrem_Dicom:
                             # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                             # lest previously (as above) retired versions of this trigger false multiples:
                             # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+                            # BATCHES NOTE: limit to the current self.batch_clause???
                             if self.locutus_settings.LOCUTUS_VERBOSE:
                                 print('{0}.Process(): PHASE01b02: about to remove any existing outstanding '\
                                     'Stager STABLESTUDY changes for an EXISTING uuid in '\
                                     'the current Locutus OnPrem workspace status table ({1}) via DELETE : ' \
                                     'WHERE uuid=\'{2}\' '\
-                                    '    AND active '\
+                                    '    AND active {4} '\
                                     'AND change_seq_id < {3} ;'.format(
                                     CLASS_PRINTNAME,
                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                     staged_uuid,
-                                    staged_change))
+                                    staged_change,
+                                    self.batch_clause))
 
                             if not self.locutus_settings.LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION:
                                 print('{0}.Process(): WARNING: PHASE01b-02-A: per-UUID Migration requires '\
@@ -5774,13 +6515,16 @@ class OnPrem_Dicom:
                                 # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                                 # lest previously (as above) retired versions of this trigger false multiples:
                                 # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+                                #####
+                                # BATCHES NOTE: limit to the current self.batch_clause???
                                 self.LocutusDBconnSession.execute('DELETE FROM {0} '\
                                                 'WHERE uuid=\'{1}\' '\
-                                                '    AND active '\
+                                                '    AND active {3} '\
                                                 'AND change_seq_id < {2} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                 staged_uuid,
-                                                max_locutus_changeseqid_for_uuid))
+                                                max_locutus_changeseqid_for_uuid,
+                                                self.batch_clause))
                                 total_xtra_changes_removed += total_xtra_changes_removed-1
 
                         # THEN UPDATE the existing STATUS record, merely bumping its change_seq_id to the latest and greatest
@@ -5789,31 +6533,39 @@ class OnPrem_Dicom:
                         # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                         # lest previously (as above) retired versions of this trigger false multiples:
                         # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+                        # BATCHES NOTE: limit to the current self.batch_clause:
                         if self.locutus_settings.LOCUTUS_VERBOSE:
                             print('{0}.Process(): PHASE02: about to migrate outstanding '\
                                 'Stager STABLESTUDY changes for an EXISTING uuid in '\
                                 'the current Locutus OnPrem workspace status table ({1}) via UPDATE of: ' \
                                 'SET change_seq_id={2} '\
                                 'WHERE uuid=\'{3}\' '\
-                                '   AND active ;'.format(
+                                '   AND active {4} ;'.format(
                                 CLASS_PRINTNAME,
                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                 staged_change,
-                                staged_uuid))
+                                staged_uuid,
+                                self.batch_clause))
                         #####
                         # NOTE: ensuring that this is only pulling the info for ACTIVE uuids
                         # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                         # lest previously (as above) retired versions of this trigger false multiples:
                         # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
+                        # BATCHES NOTE: limit to the current self.batch_clause:
+                        # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+                        # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
                         self.LocutusDBconnSession.execute('UPDATE {0} SET change_seq_id={1} '\
                                             'WHERE uuid=\'{2}\' '\
-                                            '   AND active ;'.format(
+                                            '   AND active {3} ;'.format(
                                             LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                             staged_change,
-                                            staged_uuid))
+                                            staged_uuid,
+                                            self.batch_clause))
                     else:
                         # NOTE: no need for accession_num_src FOLLOWING the alpha-numeric upgrade of Juneteenth 2025, in which accession_num_src might have been used to detect any previous SPLITS....
+                        # BATCHES NOTE: INSERT w/ self.batch_insert_update_val:
                         if self.locutus_settings.LOCUTUS_VERBOSE:
+                            # NOTE: leave batch_insert_update_val as UNQUOTED, since it could be NULL or a quoted string:
                             print('{0}.Process(): PHASE02: about to migrate outstanding '\
                                 'Stager STABLESTUDY changes for a NEW uuid to '\
                                 'the current Locutus OnPrem workspace STATUS table ({1}) via INSERT of: ' \
@@ -5821,34 +6573,44 @@ class OnPrem_Dicom:
                                 'change_type, uuid, '\
                                 'accession_num, '\
                                 'active, '\
-                                'phase_processed) '\
-                                'VALUES({2}, "{3}", "{4}", '\
+                                'phase_processed, '\
+                                'batch_name) '\
+                                'VALUES( {2}, "{3}", "{4}", '\
                                 '\'{5}\', '\
                                 'True, '\
-                                '{6})'.format(
+                                '{6}, '\
+                                '{7} )'.format(
                                 CLASS_PRINTNAME,
                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                 staged_change,
                                 staged_change_type,
                                 staged_uuid,
                                 staged_accession_num,
-                                MIN_PROCESSING_PHASE))
+                                MIN_PROCESSING_PHASE,
+                                self.batch_insert_update_val))
+                        # BATCHES NOTE: INSERT w/ self.batch_insert_update_val:
+                        # BATCHES NOTE: STATUS INSERTS need no parallel INSERT into LOCUTUS_ALL_BATCHES_TABLE.
+                        # TOOD: move VVV below STATUS INSERT into a new Settings:insert_status_record() method (and likewise for UPDATEs).
+                        # NOTE: leave batch_insert_update_val as UNQUOTED, since it could be NULL or a quoted string:
                         self.LocutusDBconnSession.execute('INSERT INTO {0} ('\
                                             'change_seq_id, '\
                                             'change_type, uuid, '\
                                             'accession_num, '\
                                             'active, '\
-                                            'phase_processed) '\
+                                            'phase_processed, '\
+                                            'batch_name) '\
                                             'VALUES({1}, \'{2}\', \'{3}\', '\
                                             '\'{4}\', '\
                                             'True, '\
-                                            '{5}) ;'.format(
+                                            '{5}, '\
+                                            '{6} ) ;'.format(
                                             LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                             staged_change,
                                             staged_change_type,
                                             staged_uuid,
                                             staged_accession_num,
-                                            MIN_PROCESSING_PHASE))
+                                            MIN_PROCESSING_PHASE,
+                                            self.batch_insert_update_val))
                     num_changes_migrated_in_Phase02 += 1
 
             if not self.locutus_settings.LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION:
@@ -5907,7 +6669,20 @@ class OnPrem_Dicom:
             print('{0}.Process(): END of PHASE02: phase processing complete for this batch.'.format(CLASS_PRINTNAME), flush=True)
             print('{0}.Process(): -------------------------------------'.format(CLASS_PRINTNAME), flush=True)
 
-        # Processing Phase03:
+        #################################################
+        # Pre-Processing BookKeeping for Phase03:
+        # coalescing the DICOM droplets :-)
+        # NOTE: all until # REAL_PHASE03 ******************
+        # are Pre-Phase03 Bookkeeping
+        # on a manifest-driven row by row
+        # TODO: RENAME to end of Phase02,
+        #################################################
+
+        # CORE START: following the above headers, preface the below summary results with a comment line, to highlight completeness:
+        print('{0},###############'.format(
+                    MANIFEST_OUTPUT_PREFIX), flush=True)
+
+        # Pre-Processing Phase03:
         ###########################################################
         # == Download DICOM Dir and unzip, setting the first of many processed phases,
         # as initiated by the DICOM_MANIFEST file.
@@ -5940,25 +6715,19 @@ class OnPrem_Dicom:
         # go ahead and expand the use of the following, momentary_manifest_attrs:
         momentary_manifest_attrs = {}
         rownum = 1
+        # WAS: MANIFEST_READER=part2a & part2b:
         try:
             # partA == initial manifest reading prior to the while not manifest_done loop
-            curr_manifest_row = next(self.manifest_reader)
-            while len(curr_manifest_row) == 0 or \
-                    (not any(field.strip() for field in curr_manifest_row)) or \
-                    curr_manifest_row[0] == '' or \
-                    curr_manifest_row[0][0] == '#':
-                # read across any blank manifest lines (or lines with only blank fields, OR lines starting with a comment, '#'):
-                print('{0}.Process(): partA ignoring input manifest body line of "{1}"'.format(CLASS_PRINTNAME, curr_manifest_row), flush=True)
-                if MANIFEST_OUTPUT_INCLUDE_COMMENT_LINES:
-                    # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
-                    # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
-                    #if self.locutus_settings.LOCUTUS_VERBOSE:
-                    print('{0},{1}'.format(
-                                MANIFEST_OUTPUT_PREFIX,
-                                ','.join(curr_manifest_row)),
-                                flush=True)
-                curr_manifest_row = next(self.manifest_reader)
-            print('{0}.Process(): partA head of while not manifest_done parsing input manifest body line of "{1}"'.format(CLASS_PRINTNAME, curr_manifest_row), flush=True)
+            if not self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+                # NOTE:MANIFEST_READER=part2a-ALT-CSV:
+                # loading manifest from CSV
+                curr_manifest_row = self.locutus_settings.get_next_nontrivial_row_via_manifest_CSV()
+            else:
+                # NOTE:MANIFEST_READER=part2a-ALT-DB:
+                # manifest-once loading batch from DB:
+                curr_manifest_row = self.locutus_settings.get_next_acc_via_batch_cursor()
+            if self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS and self.locutus_settings.LOCUTUS_VERBOSE:
+                print('{0}.Process(): partA head of while not manifest_done parsing input manifest body line of "{1}"'.format(CLASS_PRINTNAME, curr_manifest_row), flush=True)
         except StopIteration as e:
             manifest_done = True
 
@@ -5971,20 +6740,26 @@ class OnPrem_Dicom:
         check_module=False
         module_name=SYS_STAT_MODULENAME
         ####
-        (curr_sys_stat_node, sys_msg_node, sys_node_name) = self.locutus_settings.get_Locutus_system_status(self.locutus_settings, check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
-        print('{0},{1},node={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "onprem_GET_LOCUTUS_SYS_STATUS", sys_node_name, curr_sys_stat_node, sys_msg_node), flush=True)
+        (curr_sys_stat_node, sys_msg_node, sys_node_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+        print('{0},{1},node={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_node_name, curr_sys_stat_node, sys_msg_node), flush=True)
         ####
         check_Docker_node=False
         check_module=True
-        (curr_sys_stat_module, sys_msg_module, sys_module_name) = self.locutus_settings.get_Locutus_system_status(self.locutus_settings, check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
-        print('{0},{1},module={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "onprem_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_module, sys_msg_module), flush=True)
+        (curr_sys_stat_module, sys_msg_module, sys_module_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+        print('{0},{1},module={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_module, sys_msg_module), flush=True)
         ####
-        # only need to evaluate curr_sys_stat_node & curr_sys_stat_module, since it takes into account curr_sys_stat_overall during its calculation
-        if (curr_sys_stat_node and curr_sys_stat_module):
-            print('r3m0 DEBUG: OnPrem sees Locutus System Status is active for this node & module (and overall).... carry on!')
+        # NOTE: We DO seemingly need to evaluate curr_sys_stat_overall as well as curr_sys_stat_node & curr_sys_stat_module, since it MIGHT NOT take into account curr_sys_stat_overall during its calculation
+        check_Docker_node=False
+        check_module=False
+        (curr_sys_stat_overall, sys_msg_overall, sys_module_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+        print('{0},{1},overall={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_overall, sys_msg_overall), flush=True)
+        ####
+        if (curr_sys_stat_node and curr_sys_stat_module and curr_sys_stat_overall):
+            print('OnPrem Process() confirms Locutus System Status is currently active for this node & module & overall.... carry on!')
         else:
+            # NOTE: bail here, as early as possible in Process(), if not active System Status
             run_loop = False
-            print('FATAL ERROR: OnPrem sees Locutus System Status is NOT currently active for this '\
+            print('FATAL ERROR: OnPrem Process() sees Locutus System Status is NOT currently active for this '\
                     'module (status={0}) or node (status={1}); '\
                     'setting manifest_done to end the current manifest processing loop '\
                     '(and activating LOCUTUS_DISABLE_PHASE_SWEEP).'.format(
@@ -6053,16 +6828,21 @@ class OnPrem_Dicom:
             # add the current accession_num to all list of all from manifest,
             # regardless of its processing status, for subsequent comparison
             # with LOCUTUS_EXPAND_PHASE_SWEEP_BEYOND_MANIFEST:
-            # [w/ the following as ^C/^V'd from module_gcp_dicom.pya]
             # WAS: safe_acc_num_str = str(self.remove_trailing_zeros(manifest_accession_str))
             # and for ^C/^V code compatibility, redundantly copy:
             ####################
             # NOTE: 6/19/2025 Juneteenth Upgrade Path towards alpha-numeric accessions with the MANIFEST table:
             # WAS: accession_num = safe_acc_num_str
             accession_num = manifest_accession_str
-            safe_acc_num_str = self.locutus_settings.atoi(manifest_accession_str)
+
+            #WAS: safe_acc_num_str = self.locutus_settings.atoi(manifest_accession_str)
+            safe_acc_num_str = src_modules.settings.atoi(manifest_accession_str)
+
             accession_num_COMPARE = safe_acc_num_str
-            accession_restr = self.locutus_settings.itoa(accession_num_COMPARE)
+
+            #WAS: accession_restr = self.locutus_settings.itoa(accession_num_COMPARE)
+            accession_restr = src_modules.settings.itoa(accession_num_COMPARE)
+
             accession_is_ALPHAnumeric = True
 
             # NOTE: 6/19/2025 Ensuring that we are no longer using atoi()'d "safe_acc_num_str" beyond this comparison
@@ -6159,7 +6939,9 @@ class OnPrem_Dicom:
                     # the uuid_<studyid> file format internally until Phase05's xfer to targets such as: AWS s3 & GCP GS.
 
                     print('{0}.Process(): -------------------------------------'.format(CLASS_PRINTNAME), flush=True)
-                    print('{0}.Process(): START of PHASE03 for DICOM Manifest-based '\
+                    # BATCHES NOTE: WAS printing "START of PHASE03 for DICOM Manifest-based Accession",
+                    # BUT, with new manifest-once DB Batches to bypass CSV Manifests, no longer as relevant:
+                    print('{0}.Process(): START of PHASE03 for DICOM '\
                                     'Accession# \'{1}\' ...'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str),
@@ -6171,6 +6953,8 @@ class OnPrem_Dicom:
                                     flush=True)
 
                     if self.locutus_settings.LOCUTUS_ONPREM_DICOM_FORCE_REPROCESS_ACCESSION_STATUS:
+                        # TODO: use the #define constants (TODO: make em?),
+                        # and TODO: recycle another other such applicable RE-/PROCESSING_CHANGE_MOMENTARILY code
                         # print about the LOCUTUS_ONPREM_DICOM_FORCE_REPROCESS_ACCESSION_STATUS regardless of VERBOSE:
                         print('{0}.Process(): PHASE03: INFO: LOCUTUS_ONPREM_DICOM_FORCE_REPROCESS_ACCESSION_STATUS '\
                                     'set; returning to phase_processed={1} for Accession# \'{2}\''.format(
@@ -6178,10 +6962,11 @@ class OnPrem_Dicom:
                                     MIN_PROCESSING_PHASE,
                                     safe_acc_num_str),
                                     flush=True)
-                        #WAS: self.reset_accession_phase_processed(safe_acc_num_str)
-                        #from module_gcp_dicom.py:
-                        # self.reset_accession_status_for_reprocessing(curr_accession_num, curr_subject_id, curr_object_info)
-                        # localized to:
+                        # 3/10/2026 NOTE: prior, reset_accession_status_for_reprocessing()
+                        # used to ONLY reset if curr manifest_status NOT LIKE %PENDING_CHANGE%.
+                        # Now, allowing that reset regardless, to better support LOCUTUS_ALL_BATCHES_TABLE
+                        # through its more generic Settings.update_batches_table().
+                        # NOTE: just be sure to UPDATE LATER once the PENDING_CHANGE manifest_status *is* found to be.
                         self.reset_accession_status_for_reprocessing(safe_acc_num_str, curr_subject_id, curr_object_info_01, curr_object_info_02, curr_object_info_03)
                     elif self.locutus_settings.LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS:
                         # print about the LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS regardless of VERBOSE:
@@ -6226,12 +7011,14 @@ class OnPrem_Dicom:
 
                     # Ensure that LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE has a placeholder for each new subject_id+accession#
                     # e.g., before even checking on its actual processing, since that can be updated later:
+                    # BATCHES NOTE: limit to the current self.batch_clause:
                     manifest_accnum_result = self.LocutusDBconnSession.execute('SELECT COUNT(accession_num) as num '\
                                                         'FROM {0} '\
                                                         'WHERE accession_num=\'{1}\' '\
-                                                        '    AND active ;'.format(
+                                                        '    AND active {2} ;'.format(
                                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
-                                                        safe_acc_num_str))
+                                                        safe_acc_num_str,
+                                                        self.batch_clause))
 
                     manifest_accnum_row = manifest_accnum_result.fetchone()
                     manifest_accnum_count = manifest_accnum_row['num']
@@ -6243,13 +7030,15 @@ class OnPrem_Dicom:
                         # Otherwise, if no new change, do not mark as 'PENDING_CHANGE'.
 
                         # Get the previous status for later comparison against 'PENDING_CHANGE', etc:
+                        # BATCHES NOTE: limit to the current self.batch_clause:
                         manifest_status_prev_result = self.LocutusDBconnSession.execute('SELECT manifest_status, '\
                                                         'subject_id, object_info_01, object_info_02, object_info_03 '\
                                                         'FROM {0} '\
                                                         'WHERE accession_num=\'{1}\' '\
-                                                        '    AND active ;'.format(
+                                                        '    AND active {2} ;'.format(
                                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
-                                                        safe_acc_num_str))
+                                                        safe_acc_num_str,
+                                                        self.batch_clause))
                         manifest_status_prev_row = manifest_status_prev_result.fetchone()
                         manifest_status_prev_status = manifest_status_prev_row['manifest_status']
                         manifest_status_prev_subject_id = manifest_status_prev_row['subject_id']
@@ -6258,8 +7047,10 @@ class OnPrem_Dicom:
                         manifest_status_prev_object_info_03 = manifest_status_prev_row['object_info_03']
 
                         # NOTE: go ahead and print this out for all, even if !self.locutus_settings.LOCUTUS_VERBOSE:
+                        # BATCHES NOTE: WAS printing "referencing existing DICOM Manifest-based status row for Accession",
+                        # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as MANIFEST record::
                         print('{0}.Process(): PHASE03: referencing existing DICOM '\
-                                    'Manifest-based status row for Accession# \'{1}\', with previous manifest_status=\'{2}\', '\
+                                    'MANIFEST row for Accession# \'{1}\', with previous manifest_status=\'{2}\', '\
                                     'and attributes=[{3}/{4}/{5}/{6}]'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str,
@@ -6290,13 +7081,15 @@ class OnPrem_Dicom:
                             # NOTE: SAFETY CHECK, to ensure that the deid_qc_api_study_url in the *_DICOM_STATUS table
                             # matches that as supplied in the input manifest; if not, emit a WARNING and override w/ the STATUS value:
                             ########
+                            # BATCHES NOTE: limit to the current self.batch_clause:
                             deid_qc_api_study_url_via_status_result = self.LocutusDBconnSession.execute('SELECT '\
                                                     'deid_qc_api_study_url '\
                                                     'FROM {0} '\
                                                     'WHERE accession_num=\'{1}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {2} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    self.batch_clause))
                             row = deid_qc_api_study_url_via_status_result.fetchone()
 
                             deid_qc_api_study_url_via_status = ''
@@ -6595,25 +7388,41 @@ class OnPrem_Dicom:
                                     # AND, if packaging the above up into a DeleteFromDeIDQC() method,
                                     # consider also including a flag to optionally immediately reset
                                     # the deid_qc_study_*_url fields in ONPREM_DICOM_STATUS to NULL:
+                                    # BATCHES NOTE: limit to the current self.batch_clause:
+                                    # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+                                    # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
                                     self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'deid_qc_api_study_url=NULL, '\
                                                     'deid_qc_explorer_study_url=NULL '\
                                                     'WHERE accession_num=\'{1}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {2} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    self.batch_clause))
                                     # and reset curr_deid_qc_api_study_url for subsequent MANIFEST_OUTPUT:
                                     curr_deid_qc_api_study_url = ''
 
                                 # 'FAILED:*', use the same full value as provided by the input deid_qc_status:
                                 failed_manifest_status = curr_deid_qc_status
+                                # BATCHES NOTE: limit to the current self.batch_clause:
                                 self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'manifest_status=\'{1}\' '\
                                                     'WHERE accession_num=\'{2}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     failed_manifest_status,
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    self.batch_clause))
+                                # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                                # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                                self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                        src_modules.settings.DICOM_MODULE_ONPREM,
+                                                        self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                        self.batch_clause,
+                                                        safe_acc_num_str,
+                                                        True,
+                                                        failed_manifest_status,
+                                                        new_subject_id=None)
 
                             if not update_valid_deid_qc_status:
                                 print('{0}.Process(): PHASE03: WARNING: unrecognized deid_qc_status of \'{1}\'; '\
@@ -6657,13 +7466,25 @@ class OnPrem_Dicom:
                                             ''), flush=True)
 
                                 # * and an update of the MANIFEST record to save its new failed_manifest_status:
+                                # BATCHES NOTE: limit to the current self.batch_clause:
                                 self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'manifest_status=\'{1}\' '\
                                                     'WHERE accession_num=\'{2}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     failed_manifest_status,
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    self.batch_clause))
+                                # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                                # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                                self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                        src_modules.settings.DICOM_MODULE_ONPREM,
+                                                        self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                        self.batch_clause,
+                                                        safe_acc_num_str,
+                                                        True,
+                                                        failed_manifest_status,
+                                                        new_subject_id=None)
 
                                 # CONSIDER a softer failure, but perhaps to begin with, just fail with such unexpected deid_qc_status:
                                 print('{0}.Process(): PHASE03: ERROR: unrecognized deid_qc_status of \'{1}\' for '\
@@ -6685,14 +7506,18 @@ class OnPrem_Dicom:
                                 # i.e., IF update_valid_deid_qc_status:
                                 # WARNING, though, if delay_reset_accession, any deid_qc_status set here will subsequently be reset to NULL
                                 # NOTE: that can be okay, so long as the input manifest value, curr_deid_qc_status, is passed on to Phase03 & Phase04.
+                                # BATCHES NOTE: limit to the current self.batch_clause:
+                                # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
+                                # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
                                 self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'datetime_processed=now(), '\
                                                     'deid_qc_status=\'{1}\' '\
                                                     'WHERE accession_num=\'{2}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                     curr_deid_qc_status,
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    self.batch_clause))
 
                             if delay_reset_accession:
                                 self.reset_accession_phase_processed(safe_acc_num_str, clear_deid_qc=delay_reset_accession_clear_deid_qc)
@@ -6702,29 +7527,41 @@ class OnPrem_Dicom:
                                 # is here such that any changes which are not fully processed
                                 # from Phase03 and are resumed mid-way will also be updated:
                                 manifest_status = curr_deid_qc_status
+                                # BATCHES NOTE: limit to the current self.batch_clause:
                                 self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                             'last_datetime_processed=now(), '\
                                                             'manifest_status=\'{1}\' '\
                                                             'WHERE accession_num=\'{2}\' '\
-                                                            '    AND active ;'.format(
+                                                            '    AND active {3} ;'.format(
                                                             LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                             manifest_status,
-                                                            safe_acc_num_str))
+                                                            safe_acc_num_str,
+                                                            self.batch_clause))
+                                # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                                # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                                self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                                self.batch_clause,
+                                                                safe_acc_num_str,
+                                                                True,
+                                                                manifest_status,
+                                                                new_subject_id=None)
 
                     elif manifest_accnum_count > 1:
-                        # NOTE: the GCP module does initially consider throwing an exception for this scenario, via:
-                        #####
-                        #new_exception_msg = 'ERROR_PHASE03: more than one '\
-                        #                    'DICOM Manifest-based status row '\
-                        #                    'found for Accession# \'{1}\''.format(
-                        #                    CLASS_PRINTNAME,
-                        #                    self.remove_trailing_zeros(curr_accession_num))
-                        #####
-                        print('{0}.Process(): PHASE03: ERROR: more than one DICOM Manifest-based '\
-                                    'status rows found for Accession# \'{1}\''.format(
-                                    CLASS_PRINTNAME,
-                                    safe_acc_num_str),
-                                    flush=True)
+                        # NOTE: setup a POTENTIAL exception for this scenario, via:
+                        # BATCHES NOTE: WAS printing "more than one DICOM Manifest-based status row found for Accession",
+                        # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as MANIFEST record::
+                        new_exception_msg = 'ERROR_PHASE03: more than one '\
+                                            'DICOM MANIFEST row '\
+                                            'found for Accession# \'{1}\''.format(
+                                            CLASS_PRINTNAME,
+                                            self.remove_trailing_zeros(curr_accession_num))
+                        # NOTE: but suppress it to carry on with the other accessions:
+                        print('{0}.Process() PHASE03 *NOT* throwing ValueError exception: {1}.'.format(
+                            CLASS_PRINTNAME,
+                            new_exception_msg),
+                            flush=True)
                         # 9/24/2024: NOTE: added these close() before the raise() (highlighting in case needing to alter):
                         ############################# ############################# #############################
                         # NOTE: CANCELed THESE close() + raise() sets within def Process() itself, UNLESS an actual FATAL exception (e.g., GCP_INVALID_CREDS_ERR).
@@ -6733,8 +7570,10 @@ class OnPrem_Dicom:
                         # TODO: instead, ensure that the MANIFEST has been updated with the latest manifest_status.
                         # BUT NOTE: no close() here before the raise anyhow.
                         #####
+                        # BATCHES NOTE: WAS printing "encountered errors in DICOM Manifest-based rows, more than one...",
+                        # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as MANIFEST record::
                         # WAS: raise ValueError('Locutus {0}.Process() PHASE03 encountered errors in '\
-                        #                    'DICOM Manifest-based status rows, more than one '\
+                        #                    'DICOM MANIFEST rows, more than one '\
                         #                    'found for Accession# \'{1}\''.format(
                         #                    CLASS_PRINTNAME,
                         #                    self.remove_trailing_zeros(safe_acc_num_str)))
@@ -6747,34 +7586,57 @@ class OnPrem_Dicom:
                         skip_to_next_accession = True
                         # NOTE: it **seems** that no more outstanding manifest_status updates are needed for this
                     elif manifest_accnum_count == 0:
-                        # Add a new place-holder row for processing this manifest-based Accession#:
+                        # Add a new place-holder MANIFEST row for processing this Accession#:
                         test_msg = ""
                         if self.locutus_settings.LOCUTUS_TEST:
                             test_msg = " TEST MODE: not actually"
                         if self.locutus_settings.LOCUTUS_VERBOSE:
-                            print('{0}.Process(): PHASE03:{1} adding new DICOM Manifest-based '\
-                                    'status row for Accession# \'{2}\''.format(
+                            # BATCHES NOTE: WAS printing "adding new DICOM Manifest-based status rows for...",
+                            # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as MANIFEST record::
+                            print('{0}.Process(): PHASE03:{1} adding new DICOM MANIFEST '\
+                                    'row for Accession# \'{2}\''.format(
                                     CLASS_PRINTNAME,
                                     test_msg,
                                     safe_acc_num_str),
                                     flush=True)
                         if not self.locutus_settings.LOCUTUS_TEST:
+                            # BATCHES NOTE: INSERT w/ self.batch_insert_update_val:
+                            # NOTE: leave batch_insert_update_val as UNQUOTED, since it could be NULL or a quoted string:
+                            # Q: where is the manifest_status value for the above new MANIFEST RECORD?
+                            # NOTE: for now, at least give it an explicit "temp-empty" value:
+                            temp_empty_manifest_status='TEMPTY_MANIFEST_STATUS'
                             self.LocutusDBconnSession.execute('INSERT INTO {0} ('\
-                                                    'subject_id, '\
-                                                    'object_info_01, '\
-                                                    'object_info_02, '\
-                                                    'object_info_03, '\
+                                                    'subject_id, object_info_01, object_info_02, object_info_03, '\
                                                     'active, '\
-                                                    'accession_num ) '\
+                                                    'accession_num, '\
+                                                    'manifest_status, '\
+                                                    'batch_name ) '\
                                                     'VALUES(\'{1}\', \'{2}\', \'{3}\', \'{4}\', '\
                                                     'True, '\
-                                                    '\'{5}\' );'.format(
+                                                    '\'{5}\', '\
+                                                    '\'{6}\', '\
+                                                    '{7} );'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     curr_subject_id,
                                                     curr_object_info_01,
                                                     curr_object_info_02,
                                                     curr_object_info_03,
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    temp_empty_manifest_status,
+                                                    self.batch_insert_update_val))
+                            # BATCHES NOTE: MANIFEST INSERTS also have parallel INSERT to LOCUTUS_ALL_BATCHES_TABLE.
+                            # Q: where is the manifest_status value for the above new MANIFEST RECORD?
+                            # NOTE: for now, at least give it an explicit "temp-empty" value:
+                            # MOVED UP: temp_empty_manifest_status='TEMPTY_MANIFEST_STATUS'
+                            self.locutus_settings.insert_batches_table(
+                                                    self.locutus_settings, self.LocutusDBconnSession,
+                                                    src_modules.settings.DICOM_MODULE_ONPREM,
+                                                    self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                    self.batch_insert_update_val,
+                                                    curr_accession_num,
+                                                    True,
+                                                    temp_empty_manifest_status,
+                                                    curr_subject_id)
 
                 missing_fw_session_import_arg='n/a'
                 if not skip_to_next_accession:
@@ -6795,15 +7657,17 @@ class OnPrem_Dicom:
                     # de-coupled both the phase_processed and the deidentified_targets from this SELECT DISTINCT(uuid) to subsequent followup queries:
 
                     # NOTE: opened up to allow for a FAILED_PROCESSING_PHASE (which is > MAX_PROCESSING_PHASE):
+                    # BATCHES NOTE: limit to the current self.batch_clause:
+                    curr_uuid = None
                     staged_change_results = self.LocutusDBconnSession.execute('SELECT DISTINCT(uuid) '\
                                                         'FROM {0} '\
                                                         'WHERE accession_num=\'{1}\' '\
-                                                        '    AND active '\
-                                                        'AND phase_processed <= {2} '\
-                                                        ';'.format(
+                                                        '    AND active {3} '\
+                                                        'AND phase_processed <= {2} ;'.format(
                                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                         safe_acc_num_str,
-                                                        FAILED_PROCESSING_PHASE))
+                                                        FAILED_PROCESSING_PHASE,
+                                                        self.batch_clause))
 
                     # NOTE: rather than doing a separate SELECT COUNT() on the above,
                     # enumerate through the needed result to perform the count check:
@@ -6812,16 +7676,139 @@ class OnPrem_Dicom:
                     for rownum, staged_change_row in enumerate(staged_change_results):
                         numrows += 1
 
+                    if numrows < 1 and \
+                        self.locutus_settings.LOCUTUS_BATCH_NAME and \
+                        len(self.locutus_settings.LOCUTUS_BATCH_NAME):
+                        # BATCHES NOTE: for manifest-once Batch query in the Workspace via SQL
+                        # if no existing UUIDs found in STATUS for self.batch_clause,
+                        # AND if the batch_clause is of a non-NULL batch_name,
+                        # THEN, we can also interject a test for the UUID via the NULL batch;
+
+                        print('{0}.Process(): PHASE03: found NO distinct uuid '\
+                                            'matching Accession# \'{1}\' for batch_name=\'{2}\'; '\
+                                            'checking for default NULL batch'.format(
+                                            CLASS_PRINTNAME,
+                                            safe_acc_num_str,
+                                            self.locutus_settings.LOCUTUS_BATCH_NAME),
+                                            flush=True)
+
+                        # NOTE: no need for pulling the default NULL-batch subject_id, object_info_??,
+                        # nor the datetime_processed, src_orthanc_notes, phase_processed, QCs, cfgs or paths
+                        # since these will be populated (if not initially, once De-ID continues),
+                        # to set: active, datetime_processed, phase_processed, etc.
+                        # Q: do we even need phase_processed & subject_id from here?
+                        staged_NULLbatch_change_results = self.LocutusDBconnSession.execute('SELECT '\
+                                                        'change_seq_id, change_type, uuid, '\
+                                                        'phase_processed, subject_id '\
+                                                        'FROM {0} '\
+                                                        'WHERE accession_num=\'{1}\' '\
+                                                        '    AND active '\
+                                                        '    AND batch_name IS NULL '\
+                                                        'AND phase_processed <= {2} ;'.format(
+                                                        LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                                                        safe_acc_num_str,
+                                                        FAILED_PROCESSING_PHASE))
+                        numrows_NULLbatch = 0
+                        staged_NULLbatch_change_row = None
+                        for rownum_NULLbatch, staged_NULLbatch_change_row in enumerate(staged_NULLbatch_change_results):
+                            numrows_NULLbatch += 1
+                        # if it exists, then a quick copy over to this batch will set it in motion.
+                        if numrows_NULLbatch > 1:
+                            # NOTE: SHOULD only see 0 or 1 such UUID record w/ NULL batch,
+                            # BUT: data glitches from earlier code might have allowed multiples of the same:
+                            # print regardless of VERBOSE
+                            # (and note that now curr_deid_qc_api_study_url now matches deid_qc_api_study_url_via_status)
+                            print('{0}.Process(): PHASE03: ERROR: FOUND 0 NAMED-batch, '\
+                                'AND {1} NULL-batch rows; '\
+                                'this >1 NULL-batch find seems to indicate a data corruption issue '\
+                                'that needs attention. Please resolve in the DB prior to re-deploying.'.format(
+                                CLASS_PRINTNAME,
+                                numrows_NULLbatch ), flush=True)
+                            raise ValueError('{0}.Process(): PHASE03: ERROR: FOUND 0 NAMED-batch, '\
+                                'AND {1} NULL-batch rows; '\
+                                'this >1 NULL-batch find seems to indicate a data corruption issue '\
+                                'that needs attention. Please resolve in the DB prior to re-deploying.'.format(
+                                CLASS_PRINTNAME,
+                                numrows_NULLbatch ))
+                        elif numrows_NULLbatch == 1:
+                            # TODO: if found w/ numrows==1, then COPY to this NAMED-batch
+                            #  NOTE: NOW: TODO:  SQL COPY of the record?
+                            # MAYBE already in staged_NULLbatch_change_row,
+                            # and able to INSERT w/ new batch_clause?
+                            # PROBABLY BEST to load it up from staged_NULLbatch_change_row,
+                            # and merely change the batch_name to self.locutus_settings.LOCUTUS_BATCH_NAME
+                            #
+                            # WAS WITH: 'of staged_NULLbatch_change_row: (change_seq_id={0}, change_type={1}, uuid={2}) '.format(','.join(staged_NULLbatch_change_row)), flush=True)
+                            print('r3m0 DEBUG: FOUND 0 NAMED-batch, and 1 NULL-batch row '\
+                                'of staged_NULLbatch_change_row: (change_seq_id={0}, change_type={1}, uuid={2}, at phase_processed={3}, for subject_id=\'{4}\') '.format(
+                                    staged_NULLbatch_change_row['change_seq_id'],
+                                    staged_NULLbatch_change_row['change_type'],
+                                    staged_NULLbatch_change_row['uuid'],
+                                    staged_NULLbatch_change_row['phase_processed'],
+                                    staged_NULLbatch_change_row['subject_id'], ), flush=True)
+
+                            # NOTE: leave batch_insert_update_val as UNQUOTED, since it could be NULL or a quoted string:
+                            self.LocutusDBconnSession.execute('INSERT INTO {0} ('\
+                                            'change_seq_id, change_type, uuid, '\
+                                            'accession_num, '\
+                                            'subject_id, object_info_01, object_info_02, object_info_03,  '\
+                                            'active, '\
+                                            'phase_processed, '\
+                                            'datetime_processed, '\
+                                            'batch_name) '\
+                                            'VALUES({1}, \'{2}\', \'{3}\', '\
+                                            '\'{4}\', '\
+                                            '\'{5}\', \'{6}\', \'{7}\', \'{8}\', '\
+                                            'True, '\
+                                            '{9}, now(), '\
+                                            '{10} ) ;'.format(
+                                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                                            staged_NULLbatch_change_row['change_seq_id'],
+                                            staged_NULLbatch_change_row['change_type'],
+                                            staged_NULLbatch_change_row['uuid'],
+                                            safe_acc_num_str,
+                                            curr_subject_id,
+                                            curr_object_info_01,
+                                            curr_object_info_02,
+                                            curr_object_info_03,
+                                            MIN_PROCESSING_PHASE,
+                                            self.batch_insert_update_val))
+
+                            # NOTE: finally, just update numrows to numrows_NULLbatch==1 and carry on.
+                            numrows = 1
+                            # AND, need to rebuild staged_change_row,
+                            # but only for UUID, so can merely re-use the newly select default NULL-batch one:
+                            staged_change_row = staged_NULLbatch_change_row
+                            curr_uuid = staged_change_row['uuid']
+
+                            print('{0}.Process(): PHASE03: created new distinct uuid {1} '\
+                                                'of Accession# \'{2}\' for batch_name=\'{3}\' '\
+                                                'as from default NULL batch'.format(
+                                                CLASS_PRINTNAME,
+                                                curr_uuid,
+                                                safe_acc_num_str,
+                                                self.locutus_settings.LOCUTUS_BATCH_NAME),
+                                                flush=True)
+
                     # Check that the above result found either 0 or 1 (& only 1!) uuid:
+                    # NOTE: already None by here; print('r3m0 DEBUG: just about to reset manifest_status FROM \'{0}\' to None...'.format(manifest_status), flush=True)
                     manifest_status = None
                     whynot_manifest_status = None
                     missing_targetname='n/a'
                     missing_fw_session_import_arg='n/a'
                     post_manifest_update_exception = None
                     if numrows > 1:
-                        print('{0}.Process(): PHASE03: ERROR: more than one changed '\
-                                    'distinct uuids match Accession# \'{1}\'; setting error '\
-                                    'status until resolved'.format(
+                        #WAS: print('{0}.Process(): PHASE03: ERROR: more than one changed '\
+                        #            'distinct uuids match Accession# \'{1}\'; setting error '\
+                        #            'status until resolved'.format(
+                        #            CLASS_PRINTNAME,
+                        #            safe_acc_num_str),
+                        #            flush=True)
+                        # 2006 May 15 NOTE: no longer treat as ERRORs these ever more common Multi-UUIDs w/ manifest_status=ERROR_MULTIPLE_CHANGE_UUIDS:
+                        print('{0}.Process(): PHASE03: WARNING: more than one changed '\
+                                    'distinct uuids match Accession# \'{1}\'; NO LONGER setting error '\
+                                    'status (see the Locutus Summarizer Sidecar, The Multi-UUID Resolver, '\
+                                    'for support in resolving)'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str),
                                     flush=True)
@@ -6836,23 +7823,32 @@ class OnPrem_Dicom:
                         #            CLASS_PRINTNAME,
                         #            self.remove_trailing_zeros(safe_acc_num_str))
                         # BUT at least note an exception for the end of this batch.
-                        total_errors_encountered += 1
+                        ##########
+                        # 2006 May 15 NOTE: no longer increment total_errors_encountered due to these ever more common Multi-UUIDs w/ manifest_status=ERROR_MULTIPLE_CHANGE_UUIDS:
+                        # NOT: total_errors_encountered += 1
+                        ##########
                     elif numrows < 1:
                         print('{0}.Process(): PHASE03: Accession# \'{1}\' found no matching '\
                                     'distinct changed uuid to process '\
-                                    '(which has not already been processed to max phase {2}).'.format(
+                                    '(which has not already been processed to max phase {2}); '\
+                                    'curr manifest_accnum_count={3}, curr manifest_status=\'{4}\'.'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str,
-                                    MAX_PROCESSING_PHASE),
+                                    MAX_PROCESSING_PHASE,
+                                    manifest_accnum_count,
+                                    manifest_status),
                                     flush=True)
-
-                        if manifest_accnum_count < 1:
+                        # NOTE: was just "if manifest_accnum_count < 1";
+                        # 3/10/2026: added "or manifest_status is None" to force the reset PENDING_CHANGE:
+                        if manifest_accnum_count < 1 or manifest_status is None:
                             # NOTE: this case (manifest_accnum_count < 1) is for no such manifest_status record
                             # WAS:  manifest_status = 'PENDING_CHANGE'
                             manifest_status = self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING
                             whynot_manifest_status = manifest_status
+                            # BATCHES NOTE: WAS printing "ignoring until next manifest-based run...",
+                            # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as mere run:
                             print('{0}.Process(): PHASE03: setting manifest_status=PENDING_CHANGE '\
-                                    'for Accession# \'{1}\' and ignoring until next manifest-based '\
+                                    'for Accession# \'{1}\' and ignoring until next '\
                                     'run with a matching changed uuid'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str),
@@ -6861,24 +7857,41 @@ class OnPrem_Dicom:
                         elif manifest_status_prev_status == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING \
                         or manifest_status_prev_status[:len(self.locutus_settings.ONDECK_PENDING_CHANGE_PREFIX)] == self.locutus_settings.ONDECK_PENDING_CHANGE_PREFIX:
                             # NOTE: THIS case is for one which was previously attempted and is still 'PENDING_CHANGE'
-                            whynot_manifest_status = manifest_status_prev_status
-                            print('{0}.Process(): PHASE03: ignoring Accession# \'{1}\' '\
-                                    'until next manifest-based run with a staged matching changed uuid'.format(
+                            # WAS: whynot_manifest_status = manifest_status_prev_status
+                            # TRY:
+                            manifest_status = manifest_status_prev_status
+                            if not manifest_status:
+                                # NOTE: seems that manifest_status_prev_status is NOT saved prior to RE-PROCESSING_CHANGE_MOMENTARILY,
+                                # and that it may arrive here as None, in which case....
+                                # reset directly to PENDING_CHANGE, losing any potentially Preloaded suffix, etc. (much as PROCESSED would)
+                                manifest_status = self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING
+                            # OR: manifest_status = self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING
+                            # WAS: IGNORED, as per: print('{0}.Process(): PHASE03: ignoring Accession# \'{1}\' '\
+                            # NOW: go ahead and RESET its manifest_status to a proper PENDING_CHANGE,
+                            # as it was set to RE-PROCESSING_CHANGE_MOMENTARILY in the meantime:
+                            # BATCHES NOTE: WAS printing "until next manifest-based run...",
+                            # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as mere run:
+                            print('{0}.Process(): PHASE03: resetting PENDING Accession# \'{1}\' to manifest_status=\'{2}\' '\
+                                    'until next run with a staged matching changed uuid'.format(
                                     CLASS_PRINTNAME,
-                                    safe_acc_num_str),
+                                    safe_acc_num_str,
+                                    manifest_status),
                                     flush=True)
                         # WAS: elif manifest_status_prev_status == 'ERROR_MULTIPLE_CHANGE_UUIDS':
                         elif manifest_status_prev_status == self.locutus_settings.MANIFEST_OUTPUT_STATUS_ERROR_MULTIPLE_PREFIX \
                         or manifest_status_prev_status[:len(self.locutus_settings.ONDECK_MULTIPLES_CHANGE_PREFIX)] == self.locutus_settings.ONDECK_MULTIPLES_CHANGE_PREFIX:
                             # NOTE: THIS case is for one which was previously attempted but is still 'ERROR_MULTIPLE_CHANGE_UUIDS'
                             whynot_manifest_status = manifest_status_prev_status
-                            print('{0}.Process(): PHASE03: ignoring Accession# \'{1}\' '\
-                                    'until next manifest-based run with split-accessions (following cmd_dicom_split_accession) '\
-                                    'for this accession'.format(
+                            # BATCHES NOTE: WAS printing "ignoring until next manifest-based run...",
+                            # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as mere run:
+                            print('{0}.Process(): PHASE03: ignoring MULTI-UUID Accession# \'{1}\' '\
+                                    'until resolved via the Locutus Summarizer Sidecar, '\
+                                    'The Multi-UUID Resolver.'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str),
                                     flush=True)
                         else:
+                            # NOTE: this is a CATCH ALL for no STATUS records found, AND an unrecognised manifest_status.
                             # DEV NOTE: -r3m0: 5/23/2025: unfortunately, we ARE ending up here again, currently having my question the....
                             #   REPROCESSING_CHANGE_MOMENTARILY="RE-PROCESSING_CHANGE_MOMENTARILY"
                             # ... that is being set for the newly reset manifest_status in def reset_accession_status_for_reprocessing()
@@ -6887,8 +7900,10 @@ class OnPrem_Dicom:
                             # NOTE: should REALLY no longer end up in this "else" block, NOT AT ALL! ;-)
                             # (would only be the case where a no-status table record exists,
                             #   AND that a previous manifest_status exists, but not of `PENDING_CHANGE`)
-                            print('{0}.Process(): PHASE03: ignoring Accession# \'{1}\' '\
-                                    'until next manifest-based run with a matching changed uuid'.format(
+                            # BATCHES NOTE: WAS printing "ignoring until next manifest-based run...",
+                            # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as mere run:
+                            print('{0}.Process(): PHASE03: ignoring other-STATUS Accession# \'{1}\' '\
+                                    'until next run with a matching changed uuid'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str),
                                     flush=True)
@@ -6917,15 +7932,17 @@ class OnPrem_Dicom:
                             # NOTE: the previous SELECT DISTINCT(uuid) merely checked for MULTI-UUIDs by that accession_num,
                             # so now we look for multiple accessions from this UUID via the following COUNT(*) as num_rows:
                             # at the following SELECT MAX(phase_processed)....
+                            # BATCHES NOTE: limit to the current self.batch_clause:
                             curr_max_phase_results = self.LocutusDBconnSession.execute('SELECT '\
                                                 'MAX(phase_processed) as max_phase_processed, '\
                                                 'MIN(phase_processed) as min_phase_processed, '\
                                                 'COUNT(*) as num_rows '\
                                                 'FROM {0} '\
                                                 'WHERE uuid=\'{1}\' '\
-                                                '    AND active ;'.format(
+                                                '    AND active {2} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                                curr_uuid))
+                                                curr_uuid,
+                                                self.batch_clause))
                             curr_max_phase_row = curr_max_phase_results.fetchone()
                             curr_phase_processed = curr_max_phase_row['max_phase_processed']
                             curr_min_phase_processed = curr_max_phase_row['min_phase_processed']
@@ -6978,9 +7995,11 @@ class OnPrem_Dicom:
                             ##########
                             # WARNING: the following code section is ^C+^V'd before each Phase03, Phase04 Sweep, & Phase05 Sweep, so...
                             # TODO: consolidate these into reusable functions.
+                            # BATCHES NOTE: WAS printing "to compare this manifest-based run...",
+                            # BUT, with new manifest-once DB Batches to bypass CSV Manifests, clarify as STATUS record:
                             print('{0}.Process(): PHASE03: examining Accession# \'{1}\' '\
                                     'with MIN/MAX of (phase_processed) = {2}/{3} '
-                                    'to compare this manifest-based run with a previously processed matching changed uuid'.format(
+                                    'to compare this STATUS record with a previously processed matching changed uuid'.format(
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str,
                                     curr_min_phase_processed,
@@ -7041,13 +8060,15 @@ class OnPrem_Dicom:
                             int_cfgs_active_msg = '' if int_cfgs_match else '/CFGs:{0}'.format(';'.join(int_cfgs_active))
 
                             # TODO: be sure to update for an object_info_04 if/when used from input manifest:
+                            # BATCHES NOTE: limit to the current self.batch_clause:
                             previous_manifest_result = self.LocutusDBconnSession.execute('SELECT subject_id, '\
                                                                 'object_info_01, object_info_02, '\
                                                                 'object_info_03, manifest_status FROM {0} '\
                                                                 'WHERE accession_num=\'{1}\' '\
-                                                                '    AND active ;'.format(
+                                                                '    AND active {2} ;'.format(
                                                                 LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
-                                                                safe_acc_num_str))
+                                                                safe_acc_num_str,
+                                                                self.batch_clause))
                             previous_manifest_row = previous_manifest_result.fetchone()
                             prev_manifest_status = previous_manifest_row['manifest_status']
                             prev_subject_id = previous_manifest_row['subject_id']
@@ -7166,24 +8187,26 @@ class OnPrem_Dicom:
                                                                                     int_cfgs_max_match_phase)
                                     #####
                                     # Then, create a new blank manifest record with the current attributes:
+                                    # BATCHES NOTE: INSERT w/ self.batch_insert_update_val:
+                                    # NOTE: leave batch_insert_update_val as UNQUOTED, since it could be NULL or a quoted string:
                                     self.LocutusDBconnSession.execute('INSERT INTO {0} ('\
-                                                    'subject_id, '\
-                                                    'object_info_01, '\
-                                                    'object_info_02, '\
-                                                    'object_info_03, '\
+                                                    'subject_id, object_info_01, object_info_02, object_info_03, '\
                                                     'accession_num, '\
                                                     'active, '\
+                                                    'batch_name, '\
                                                     'deid_qc_status ) '\
                                                     'VALUES(\'{1}\', \'{2}\', \'{3}\', \'{4}\', '\
                                                     '\'{5}\', '\
-                                                    'True. '\
-                                                    '\'{6}\' );'.format(
+                                                    'True, '\
+                                                    '{6}, '\
+                                                    '\'{7}\' );'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     curr_subject_id,
                                                     curr_object_info_01,
                                                     curr_object_info_02,
                                                     curr_object_info_03,
                                                     safe_acc_num_str,
+                                                    self.batch_insert_update_val,
                                                     curr_deid_qc_status))
                                     #####
                                     # then update same_manifest_attributes for continuation:
@@ -7207,7 +8230,7 @@ class OnPrem_Dicom:
                                     ###########################################################
                                     to_generate_whynot_manifest_status_for_previous = True
 
-                            # another PRE-LADDER, to align w/ same location as that for module_gcp_dicom.py:
+                            # another PRE-LADDER:
                             print('r3m0 DEBUG: PRE-LADDER-01 vars before the following if/elif/else ladder: '\
                                         'same_manifest_attributes={0}, '\
                                         'curr_phase_processed={1}, '\
@@ -7325,14 +8348,15 @@ class OnPrem_Dicom:
                                 # TODO: compare against the last manifest values to determine if they were the same:
 
                                 # Query the latest deid target, de-coupled from the outer SELECT DISTINCT(uuid), phase_processed:
+                                # BATCHES NOTE: limit to the current self.batch_clause:
                                 curr_targets_results = self.LocutusDBconnSession.execute('SELECT DISTINCT(deidentified_targets) '\
                                                     'FROM {0} '\
                                                     'WHERE accession_num=\'{1}\' '\
-                                                    '    AND active '\
-                                                    'AND deidentified_targets IS NOT NULL '\
-                                                    ';'.format(
+                                                    '    AND active {2} '\
+                                                    'AND deidentified_targets IS NOT NULL ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    self.batch_clause))
                                 curr_targets_row = curr_targets_results.fetchone()
                                 # NOTE: the above 'AND deidentified_targets IS NOT NULL' clause can result in a NULL return set
                                 curr_targets = None
@@ -7348,7 +8372,7 @@ class OnPrem_Dicom:
                                     print("MANIFEST_OUTPUT:,# WHOA!!!!!  r3m0 say Dat Aint RIGHT!!!!!!  curr_targets_row is EMPTY, seemingly MISSING a deidentified_targets (continuing anyhow)", flush=True)
                                     #raise ValueError('UNEXPECTED ERROR: curr_targets_row is EMPTY, seemingly MISSING a deidentified_gs_target')
                                     # NOTE: looking MUCH better now.
-                                    # r3m0: HERE: TODO:
+                                    # NOTE: TODO:
                                     # NEXT: play with the ERROR further WITHOUT the above raise(),
                                     # to try to get the traceback to show.
                                     whynot_manifest_status = 'ERROR_PHASE03_Missing_PreviouslyProcessed_DeID_Target'
@@ -7492,14 +8516,26 @@ class OnPrem_Dicom:
                                             manifest_status),
                                             flush=True)
                 if not self.locutus_settings.LOCUTUS_TEST:
+                    # BATCHES NOTE: limit to the current self.batch_clause:
                     self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                             'last_datetime_processed=now(), '\
                                             'manifest_status=\'{1}\' '\
                                             'WHERE accession_num=\'{2}\' '\
-                                            '    AND active ;'.format(
+                                            '    AND active {3} ;'.format(
                                             LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                             manifest_status,
-                                            safe_acc_num_str))
+                                            safe_acc_num_str,
+                                            self.batch_clause))
+                    # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                    # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                    self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                src_modules.settings.DICOM_MODULE_ONPREM,
+                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                self.batch_clause,
+                                                safe_acc_num_str,
+                                                True,
+                                                manifest_status,
+                                                new_subject_id=None)
 
                 if post_manifest_update_exception:
                     raise ValueError(post_manifest_update_exception)
@@ -7527,6 +8563,14 @@ class OnPrem_Dicom:
                                 curr_deid_qc_api_study_url,
                                 missing_targetname,
                                 missing_fw_session_import_arg), flush=True)
+
+
+                # Processing Phase03:
+                #*********************************************
+                # REAL_PHASE03 begins here: ******************
+                # TODO: update all of the above to reflect PHASE02,
+                # & ensure that all are consistently Phase02, Phase03, etc.
+                #*********************************************
 
                 caught_exception = None
                 # only continue on with the actual Phase03 processing if applicable:
@@ -7579,7 +8623,7 @@ class OnPrem_Dicom:
                         #######################
                         # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                         # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                        # NOTE: this is in both GCP and OnPrem modules (since OnPrem ^C/^V'd from GCP during its Level-Up)
+                        # NOTE: this is in the DICOM De-ID modules
                         #######################
                         # at least save some bits from the last exception into status:
                         safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -7610,14 +8654,26 @@ class OnPrem_Dicom:
                             # only prepend ERROR_PHASE03viaProcess if a phase isn't already noted:
                             manifest_status = 'ERROR_PHASE03viaProcess=[{0}]'.format(err_desc)
 
+                        # BATCHES NOTE: limit to the current self.batch_clause:
                         self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'last_datetime_processed=now(), '\
                                                     'manifest_status=\'{1}\' '\
                                                     'WHERE accession_num=\'{2}\' '\
-                                                    '    AND active ;'.format(
+                                                    '    AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
-                                                    safe_acc_num_str))
+                                                    safe_acc_num_str,
+                                                    self.batch_clause))
+                        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                        src_modules.settings.DICOM_MODULE_ONPREM,
+                                                        self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                        self.batch_clause,
+                                                        safe_acc_num_str,
+                                                        True,
+                                                        manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
+                                                        new_subject_id=None)
 
                         # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
                         # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
@@ -7662,6 +8718,7 @@ class OnPrem_Dicom:
                             # even moreso when LOCUTUS_DICOM_RUN_MODE_CONTINUE_TO_MANIFEST_CONVERGENCE is enabled.
                             # TODO: instead, ensure that the MANIFEST has been updated with the latest manifest_status.
                             #####
+                            # NOTE:MANIFEST_READER=part5b:COMMENTED:
                             #self.manifest_infile.close()
                             #self.LocutusDBconnSession.close()
                             #self.StagerDBconnSession.close()
@@ -7684,29 +8741,39 @@ class OnPrem_Dicom:
             print('{0}.Process(): -------------------------------------'.format(CLASS_PRINTNAME), flush=True)
             ######################################################################
             # BEFORE the next manifest accession is processed, check Locutus DB..... System Status section:
+            ###########
             check_Docker_node=True
             alt_node_name=None
             check_module=False
             module_name=SYS_STAT_MODULENAME
             ####
-            (curr_sys_stat_node, sys_msg_node, sys_node_name) = self.locutus_settings.get_Locutus_system_status(self.locutus_settings, check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
-            print('{0},{1},node={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "gcp_GET_LOCUTUS_SYS_STATUS", sys_node_name, curr_sys_stat_node, sys_msg_node), flush=True)
+            (curr_sys_stat_node, sys_msg_node, sys_node_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+            print('{0},{1},node={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_node_name, curr_sys_stat_node, sys_msg_node), flush=True)
             ####
             check_Docker_node=False
             check_module=True
-            (curr_sys_stat_module, sys_msg_module, sys_module_name) = self.locutus_settings.get_Locutus_system_status(self.locutus_settings, check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
-            print('{0},{1},module={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "gcp_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_module, sys_msg_module), flush=True)
+            (curr_sys_stat_module, sys_msg_module, sys_module_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+            print('{0},{1},module={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_module, sys_msg_module), flush=True)
             ####
-            # only need to evaluate curr_sys_stat_node & curr_sys_stat_module, since it takes into account curr_sys_stat_overall during its calculation
-            if (curr_sys_stat_node and curr_sys_stat_module):
-                print('r3m0 DEBUG: OnPrem sees Locutus System Status is active for this node & module (and overall).... carry on!')
+            # NOTE: We DO seemingly need to evaluate curr_sys_stat_overall as well as curr_sys_stat_node & curr_sys_stat_module, since it MIGHT NOT take into account curr_sys_stat_overall during its calculation
+            check_Docker_node=False
+            check_module=False
+            (curr_sys_stat_overall, sys_msg_overall, sys_overall_name) = self.locutus_settings.get_Locutus_system_status(check_Docker_node, alt_node_name, check_module, module_name, self.LocutusDBconnSession)
+            print('{0},{1},overall={2},{3},{4}'.format(src_modules.settings.CFG_OUT_PREFIX, "OnPrem_GET_LOCUTUS_SYS_STATUS", sys_module_name, curr_sys_stat_module, sys_msg_module), flush=True)
+            ####
+            if (curr_sys_stat_node and curr_sys_stat_module and curr_sys_stat_overall):
+                print('OnPrem Process() confirms Locutus System Status is currently active for this node & module & overall.... carry on!')
             else:
                 run_loop = False
-                print('FATAL ERROR: OnPrem sees Locutus System Status is NOT currently active for this '\
-                    'module (status={0}) or node (status={1}); '\
+                print('FATAL ERROR: OnPrem Process() sees Locutus System Status is currently NOT active '\
+                    'overall (status={0}), for this '\
+                    'module (status={1}), or for node (status={2}); '\
                     'setting manifest_done to end the current manifest processing loop '\
                     '(and activating LOCUTUS_DISABLE_PHASE_SWEEP).'.format(
-                        curr_sys_stat_module, curr_sys_stat_node), flush=True)
+                        curr_sys_stat_overall,
+                        curr_sys_stat_module,
+                        curr_sys_stat_node), flush=True)
+
                 # bail w/ this_run_has_fatal_errors:
                 #this_run_has_fatal_errors = True
                 # howzabout the less ominous manifest_done?
@@ -7715,27 +8782,23 @@ class OnPrem_Dicom:
                 self.locutus_settings.LOCUTUS_DISABLE_PHASE_SWEEP = True
             ###########
             if not manifest_done:
+                #WAS: MANIFEST_READER=part3a & 3b
                 try:
                     # partB == tail-end manifest reading within and at end of the while not manifest_done loop
-                    curr_manifest_row = next(self.manifest_reader)
-                    while len(curr_manifest_row) == 0 or \
-                        (not any(field.strip() for field in curr_manifest_row)) or \
-                        curr_manifest_row[0] == '' or \
-                        curr_manifest_row[0][0] == '#':
-                        # read across any blank manifest lines (or lines with only blank fields, OR lines starting with a comment, '#'):
-                        print('{0}.Process(): partB ignoring input manifest body line of "{1}"'.format(CLASS_PRINTNAME, curr_manifest_row), flush=True)
-                        if MANIFEST_OUTPUT_INCLUDE_COMMENT_LINES:
-                            # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
-                            # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
-                            #if self.locutus_settings.LOCUTUS_VERBOSE:
-                            print('{0},{1}'.format(
-                                        MANIFEST_OUTPUT_PREFIX,
-                                        ','.join(curr_manifest_row)),
-                                        flush=True)
-                        curr_manifest_row = next(self.manifest_reader)
-                    print('{0}.Process(): partB tail of while not manifest_done parsing input manifest body line of "{1}"'.format(CLASS_PRINTNAME, curr_manifest_row), flush=True)
+                    if not self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+                        # NOTE:MANIFEST_READER=part3a-ALT-CSV:
+                        curr_manifest_row = self.locutus_settings.get_next_nontrivial_row_via_manifest_CSV()
+                    else:
+                        # NOTE:MANIFEST_READER=part3a-ALT-DB:
+                        # manifest-once loading batch from DB:
+                        curr_manifest_row = self.locutus_settings.get_next_acc_via_batch_cursor()
+                    #print('{0}.Process(): partB tail of while not manifest_done parsing input manifest body line of "{1}"'.format(CLASS_PRINTNAME, curr_manifest_row), flush=True)
                 except StopIteration as e:
                     manifest_done = True
+
+        # CORE END: wrap up the above processing results with a comment line, to highlight completeness:
+        print('{0},###############'.format(
+                    MANIFEST_OUTPUT_PREFIX), flush=True)
 
         if processed_uuids_in_this_phase:
             print('{0}.Process(): -------------------------------------'.format(CLASS_PRINTNAME), flush=True)
@@ -7753,6 +8816,7 @@ class OnPrem_Dicom:
                     'for a Migrator-only run (w/ an accession-less NOOP manifest); '\
                     'FAILING,  to escalate alert of such Stager NULL actives needing resolution ASAP.'.format(
                     CLASS_PRINTNAME, num_null_active_staged), flush=True)
+
             # bail w/ this_run_has_fatal_errors:
             this_run_has_fatal_errors = True
             total_errors_encountered += 1
@@ -7786,14 +8850,16 @@ class OnPrem_Dicom:
                                                 CLASS_PRINTNAME,
                                                 prev_phase_processed),
                                                 flush=True)
+            # BATCHES NOTE: limit to the current self.batch_clause:
             result = self.LocutusDBconnSession.execute('SELECT DISTINCT(uuid), '\
                                                 'accession_num, '\
                                                 'identified_local_path, change_seq_id '\
                                                 ' FROM {0} '\
                                                 'WHERE phase_processed={1} '\
-                                                '    AND active ;'.format(
+                                                '    AND active {2} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                                prev_phase_processed))
+                                                prev_phase_processed,
+                                                self.batch_clause))
 
             processed_uuids_in_this_phase = False
             processRemainingPhases = True
@@ -7916,7 +8982,7 @@ class OnPrem_Dicom:
                             #######################
                             # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                             # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                            # NOTE: this is in both GCP and OnPrem modules (since OnPrem ^C/^V'd from GCP during its Level-Up)
+                            # NOTE: this is in the DICOM De-ID modules
                             #######################
                             # at least save some bits from the last exception into status:
                             safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -7941,14 +9007,27 @@ class OnPrem_Dicom:
                             # only prepend ERROR_PHASE04_SWEEP if a phase isn't already noted:
                             manifest_status = 'ERROR_PHASE04_SWEEP=[{0}]'.format(err_desc)
 
+                        # BATCHES NOTE: limit to the current self.batch_clause:
                         self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'last_datetime_processed=now(), '\
                                                     'manifest_status=\'{1}\' '\
                                                     'WHERE accession_num=\'{2}\' '\
-                                                    '   AND active ;'.format(
+                                                    '   AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
-                                                    curr_accession_num))
+                                                    curr_accession_num,
+                                                    self.batch_clause))
+                        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                        src_modules.settings.DICOM_MODULE_ONPREM,
+                                                        self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                        self.batch_clause,
+                                                        curr_accession_num,
+                                                        True,
+                                                        manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
+                                                        new_subject_id=None)
+
                         # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
                         # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
                         #
@@ -7991,6 +9070,7 @@ class OnPrem_Dicom:
                             # even moreso when LOCUTUS_DICOM_RUN_MODE_CONTINUE_TO_MANIFEST_CONVERGENCE is enabled.
                             # TODO: instead, ensure that the MANIFEST has been updated with the latest manifest_status.
                             #####
+                            # NOTE:MANIFEST_READER=part5c:COMMENTED:
                             #self.manifest_infile.close()
                             #self.LocutusDBconnSession.close()
                             #self.StagerDBconnSession.close()
@@ -8033,14 +9113,16 @@ class OnPrem_Dicom:
                                                 CLASS_PRINTNAME,
                                                 prev_phase_processed),
                                                 flush=True)
+            # BATCHES NOTE: limit to the current self.batch_clause:
             result = self.LocutusDBconnSession.execute('SELECT DISTINCT(uuid), '\
                                                 'accession_num, '\
                                                 'deidentified_local_path, change_seq_id '\
                                                 'FROM {0} '\
                                                 'WHERE phase_processed={1} '\
-                                                '    AND active ;'.format(
+                                                '    AND active {2} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                                prev_phase_processed))
+                                                prev_phase_processed,
+                                                self.batch_clause))
 
             processed_uuids_in_this_phase = False
             processRemainingPhases = True
@@ -8167,7 +9249,7 @@ class OnPrem_Dicom:
                             #######################
                             # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                             # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                            # NOTE: this is in both GCP and OnPrem modules (since OnPrem ^C/^V'd from GCP during its Level-Up)
+                            # NOTE: this is in the DICOM De-ID modules
                             #######################
                             # at least save some bits from the last exception into status:
                             safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -8192,14 +9274,27 @@ class OnPrem_Dicom:
                             # only prepend ERROR_PHASE05_SWEEP if a phase isn't already noted:
                             manifest_status = 'ERROR_PHASE05_SWEEP=[{0}]'.format(err_desc)
 
+                        # BATCHES NOTE: limit to the current self.batch_clause:
                         self.LocutusDBconnSession.execute('UPDATE {0} SET '\
                                                     'last_datetime_processed=now(), '\
                                                     'manifest_status=\'{1}\' '\
                                                     'WHERE accession_num=\'{2}\' '\
-                                                    '   AND active ;'.format(
+                                                    '   AND active {3} ;'.format(
                                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                                     manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
-                                                    curr_accession_num))
+                                                    curr_accession_num,
+                                                    self.batch_clause))
+                        # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
+                        # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
+                        self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
+                                                        src_modules.settings.DICOM_MODULE_ONPREM,
+                                                        self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
+                                                        self.batch_clause,
+                                                        curr_accession_num,
+                                                        True,
+                                                        manifest_status.replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT),
+                                                        new_subject_id=None)
+
                         # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
                         # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
                         #
@@ -8244,6 +9339,7 @@ class OnPrem_Dicom:
                             # even moreso when LOCUTUS_DICOM_RUN_MODE_CONTINUE_TO_MANIFEST_CONVERGENCE is enabled.
                             # TODO: instead, ensure that the MANIFEST has been updated with the latest manifest_status.
                             #####
+                            # NOTE:MANIFEST_READER=part5d:COMMENTED:
                             #self.manifest_infile.close()
                             #self.LocutusDBconnSession.close()                            # and another, after the fact:
                             #self.StagerDBconnSession.close()
@@ -8281,14 +9377,21 @@ class OnPrem_Dicom:
                                                 CLASS_PRINTNAME),
                                                 flush=True)
 
-        # r3m0: HERE: ====> TODO: add a Summary count of total errors encountered AND total processed, regardless....
+        # NOTE: ====> TODO: add a Summary count of total errors encountered AND total processed, regardless....
         if total_errors_encountered:
             # TODO: eventually enhance with propagating specific error message(s)
             raise ValueError('Locutus {0}.Process() encountered a total of ({1}) error(s) (see run log for specific details)'.format(
                             CLASS_PRINTNAME,
                             total_errors_encountered))
 
-        self.manifest_infile.close()
+        # WAS: MANIFEST_READER=part5e:ACTIVE:
+        #####
+        if not self.locutus_settings.LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB:
+            # NOTE:MANIFEST_READER=part0ab-ALT-CSV:
+            self.locutus_settings.close_manifest_CSV()
+        else:
+            # NOTE:MANIFEST_READER=part0ab-ALT-DB:
+            self.locutus_settings.close_batch_cursor()
 
         if self.locutus_settings.LOCUTUS_VERBOSE:
             print('{0}.Process() says Goodbye'.format(CLASS_PRINTNAME), flush=True)

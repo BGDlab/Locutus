@@ -9,20 +9,28 @@ import socket
 from sqlalchemy import create_engine
 # for nowtime of system status messages:
 import datetime
+#####
+# for debugging call stacks, etc:
+#import traceback
+#####
+# for new Manifest CSV support:
+import csv
+
 
 APP_NAME = 'Locutus'
 # NOTE: just found more to do with: APP_VERSION = '2025.06.13at0717=enhance_deploy_scripts_to_use_cmdline_args_for_manifest_and_suffix'
 # BUT FIRST....
-APP_VERSION = '2025.12.19at1204_remove_comma_from_ACCESSIONS_WITH_TEXT_summary_in_Summarizer_STATUS_OUT'
-
+#########
+APP_VERSION = '2026.06.18at2013_Update_Conductor_default_branch_deploy_script_to_devBGDlab_after_PR_of_MOB_the_new_Manifest-Once_Batch_feature_and_Samba_etc'
+#########
 # BEWARE of Code Smells all throughout Locutus; so sorry about that, fellow developers.
 # Locutus is most definitely long overdue for a refactoring to clean up some of those smells.
 # Please see, for example: https://refactoring.guru/refactoring/smells
-
+#
 # LINT NOTE: to manually find any potential print continuation lines without a space at the end from bash,
 # please refer to the following example:
 # $ cat -n src_modules/module_onprem_dicom.py | grep "\'\\\\" | grep -v format | grep -v " \'\\\\"
-
+#
 # NOTE: NOT moving CFG_OUT_* #defines into the Settings class itself to increase accessibility,
 # but leaving here for now, encouraging cmds such as the Summmarizer to also
 #   # NOTE: for the general settings in Locutus's settings.py:
@@ -50,7 +58,83 @@ CFG_OUT_HEADER_VAL = 'VALUE'
 TYPE_BOOL = True
 TYPE_NON_BOOL = False
 
+# and more constants, formerly of the Summarizer, for more access through the Batch & CSV Manifest methods:
+#################################################
+DICOM_MODULE_ONPREM = "ONPREM"
+
+# An internal configuration to allow the printing of commented lines into the MANIFEST_OUTPUT.
+# for: get_next_nontrivial_row_via_manifest_CSV()
+# Consider, for example, input manifests which might still have a pre-split accession number listed,
+# but commented out, and is followed by its respective split accession nunmbers.
+# We will want this included in the MANIFEST_OUTPUT such that all rows still align:
+MANIFEST_OUTPUT_INCLUDE_COMMENT_LINES = True
+
+MANIFEST_OUTPUT_PREFIX = "MANIFEST_OUTPUT:"
+
+#WAS: MANIFEST_HEADER_ACCESSIONS_TOTAL_BATCH = "TOTAL_ACCESSIONS_VIA_DB_BATCH"
+# changing "VIA" to "IN", as a subtle highlight that even if Bypassing the Manifest,
+# a non-empty BATCH_NAME will still apply from the CSV manifest, as in....
+# the corresponding batch-specific MANIFEST records will be used.
+MANIFEST_HEADER_ACCESSIONS_TOTAL_BATCH = "TOTAL_ACCESSIONS_IN_DB_BATCH"
+MANIFEST_HEADER_ACCESSIONS_FILTERED_BATCH = "SUBTOTAL_ACCESSIONS_IN_FILTERED_DB_BATCH"
+MANIFEST_HEADER_ACCESSIONS_COUNTED_FILTERED_BATCH = "SUBTOTAL_ACCESSIONS_IN_FILTERED_DB_BATCH_within_COUNTER_RANGE"
+MANIFEST_HEADER_BATCH_FILTER = "DB_BATCH_FILTERED_ON"
+MANIFEST_HEADER_BATCH_COUNTER_RANGE = "DB_BATCH_FILTER_COUNTER_RANGE"
+#####
+
+
+# Input Manifest headers (compare against uppercase):
+MANIFEST_TYPE_DEFAULT_SIMPLIFIED = 'simplified'
+MANIFEST_NUM_HEADERS = 1
+MANIFEST_HEADER_ACCESSION_NUM = 'ACCESSION_NUM'
+# TODO: consider eventually introducing its own expected header (perhaps not fully required, at least not yet)
+# NOTE: but for now, allow an easier copy of just the ACCESSION_NUM from another working manifest.
+SIMPLIFIED_MANIFEST_HEADER_MANIFEST_VER = 'locutus_manifest_ver:locutus.dicom-summarize.simplified'
+# OPTIONAL handling of the each modules' input manifest format as used in DICOM processing
+# ONPREM Input Manifest headers (compare against uppercase, except for manifest_ver):
+ONPREM_MANIFEST_TYPE = "ONPREM"
+ONPREM_MANIFEST_NUM_HEADERS = 7
+ONPREM_MANIFEST_SUBJ_COLUMN_OFFSET = 0  # base 0 offset to the following SUBJECT_ID input field:
+ONPREM_MANIFEST_HEADER_SUBJECT_ID = 'SUBJECT_ID'
+ONPREM_MANIFEST_OBJ01_COLUMN_OFFSET = 1  # base 0 offset to the following IMAGING_TYPE input field:
+ONPREM_MANIFEST_HEADER_OBJECT_INFO_01 = 'IMAGING_TYPE'
+ONPREM_MANIFEST_OBJ02_COLUMN_OFFSET = 2  # base 0 offset to the following AGE_AT_IMAGING_ input field:
+ONPREM_MANIFEST_HEADER_OBJECT_INFO_02 = 'AGE_AT_IMAGING_(DAYS)'
+ONPREM_MANIFEST_OBJ03_COLUMN_OFFSET = 3  # base-0 offset to the following AGE_AT_IMAGING_ input field:
+ONPREM_MANIFEST_HEADER_OBJECT_INFO_03 = 'ANATOMICAL_POSITION'
+ONPREM_MANIFEST_SOURCE_COLUMN_OFFSET = 4  # base-0 offset to the following ANATOMICAL_POSITION source field:
+ONPREM_MANIFEST_HEADER_ACCESSION_NUM = 'ACCESSION_NUM'
+# NOTE: DEID_QC_STATUS field is currently ONLY in the input MANIFEST CSV (and only persists in the STATUS table, yeah?):
+ONPREM_MANIFEST_DEID_QC_STATUS_OFFSET = 5  # base 0 offset to the following DEID_QC_STATUS input field:
+ONPREM_MANIFEST_HEADER_DEID_QC_STATUS = 'DEID_QC_STATUS'
+ONPREM_MANIFEST_VER_COLUMN_OFFSET = 6  # base 0 offset to the following MANIFEST_VER input field:
+ONPREM_MANIFEST_HEADER_MANIFEST_VER = 'locutus_manifest_ver:locutus.onprem_dicom_deid_qc.2021march15'
+###############
+# BATCHES NOTE: and headers as expected in the DB:
+# NOTE: no ONPREM_MANIFEST_HEADER_DEID_QC_STATUS in the BATCH DB version:
+ONPREM_BATCH_VIA_DB_NUM_HEADERS = 5
+ONPREM_BATCH_VIA_DB_HEADER_SUBJECT_ID = 'SUBJECT_ID'
+ONPREM_BATCH_VIA_DB_HEADER_OBJECT_INFO_01 = 'OBJECT_INFO_01'
+ONPREM_BATCH_VIA_DB_HEADER_OBJECT_INFO_02 = 'OBJECT_INFO_02'
+ONPREM_BATCH_VIA_DB_HEADER_OBJECT_INFO_03 = 'OBJECT_INFO_03'
+ONPREM_BATCH_VIA_DB_HEADER_ACCESSION_NUM = 'ACCESSION_NUM'
+# NOTE: quick workaround for matching the input manifest CSV (w/ a QC field) to records of the MANIFEST table (w/ NO QC fields YET):
+# BATCHES NOTE: TODO: some day consider enhancing the ONPREM MANIFEST TABLE to have such a DEID_QC_STATUS field as well;
+# until then, however, merely emit Stringed 'False' for it:
+ONPREM_BATCH_VIA_DB_HEADER_DEID_QC_STATUS = '\'False\''
+###############
+# with bonus version of this OnPrem manifest header for resolve_multiuuids:
+ONPREM_MANIFEST_HEADER_MANIFEST_VER_to_RESOLVE_MULTIUUIDS = 'locutus_manifest_ver:locutus.onprem_dicom.resolve_multiuuids.2024oct22'
+# NEW column of the Resolver header to support the various resolve sub-commands:
+ONPREM_MANIFEST_RESOLVEVIA_COLUMN_OFFSET = 7  # base 0 offset to the following bonus RESOLVE_VIA input field:
+ONPREM_MANIFEST_HEADER_RESOLVEVIA = 'RESOLVE_VIA'
+###############
+#################################################
+
+
 CLASS_PRINTNAME = 'Settings'
+# NOTE: not yet in the actual Settings class!
+# global/static methods to follow w/o need for an actual Settings instance.
 
 def get_config_val(config, key_name, def_val='', print_cfg_out=True, verbose=True):
     # helper to get a value from a configuration key (w/ the config typically being a config.yaml as stored in Vault)
@@ -191,6 +275,23 @@ def get_env_or_config_val(type_bool, env_key_name, config, cfg_key_name, def_val
     return key_val
 
 
+# NOTE: atoi() & itoa() WERE below Settings def create_db_tables(), but moving up to class method outside of the instance methods:
+# an ASCII to Integer implementation to assist with any of the modules w/ LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS
+def atoi(s):
+    # ascii to int, assuming unsigned base10, merely ignoring any other characters whilst building up the int,
+    # e.g., "+-0abc123de45xy6z" -> 123456
+    rtr=0
+    for c in s:
+        if ord(c) in range(ord('0'),ord('0')+10):
+            rtr=rtr*10 + ord(c) - ord('0')
+    return rtr
+
+
+# a minimal Integer to ASCII implementation to assist with any of the modules w/ LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS
+def itoa(num):
+    return str(num)
+
+
 class Settings:
     #ENV = 'local'
     #if os.environ.get("CURR_ENV") is not None:
@@ -221,7 +322,6 @@ class Settings:
         # NOTE: support quick stdout log crumb of any additional CFGs for a CFG output CSV via: grep CFG_OUT
         print('{0},locutus-env-docker-hostname,{1},{2}'.format(CFG_OUT_PREFIX, "DOCKERHOST_HOSTNAME", this_hostname), flush=True)
     else:
-        # NOTE: utilize elements borrowed from module_gcp_dicom.py's Setup()...
         ####################################################
         # determine current hostname, for prefacing stored paths to outputs:
         #this_hostname = socket.getfqdn()
@@ -257,6 +357,20 @@ class Settings:
     LOCUTUS_SYS_STATUS_TABLE_STATUS_ACTIVE_COL = 'active'   # True or False
     # defer calls to get_Locutus_system_status() to main_locutus.py itself,
     # as well as applicable modules (especially those for DeID which can take quite some time with large manifests)
+    ##########################################################
+
+    # LOCUTUS_ALL_BATCHES_TABLE:
+    #############################
+    # NOTE: the CREATE TABLE for initial self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE
+    # shall exist within each Module/Command's create_db_tables()
+    # TODO: consolidate these elsewhere (settings?), since they should
+    # perhaps to be called by each module/command?
+    # TODO: CONSIDER also mixing in with the above LOCUTUS_SYS_STATUS_TABLE
+    #############################
+    # the LOCUTUS-general batches table:
+    LOCUTUS_ALL_BATCHES_TABLE = 'aaa_locutus_batches'
+    print('{0},locutus-hardcoded,{1},{2}'.format(CFG_OUT_PREFIX, "LOCUTUS_ALL_BATCHES_TABLE", LOCUTUS_ALL_BATCHES_TABLE), flush=True)
+    ##########################################################
 
     ##########################################################
     # Orthanc endpoints of note for downloading (TODO: consider moving into towards the Stager or a DICOMSsource object)
@@ -284,6 +398,8 @@ class Settings:
     ##########################################################
     # delimter to help separate hostname from filepath:
     HOSTPATH_DELIMITER = ':'
+    # and for file separators
+    FILEPATH_DELIMITER = os.sep
     ##########################################################
 
     ##########################################################
@@ -297,13 +413,36 @@ class Settings:
     #####
     MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_PREFIX = 'PREVIOUS_PROCESSING_USED_'
     # for the Summarizer's separate "PREVIOUS_PROCESSING_USED_[*]" status line:
-    MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_WARNING_VS_DYNAMIC_COUNTS = '(NOTE: these counts are NOT included in the below Known Status PROCESSED counts, but ARE included in the Dynamically Grouped PROCESSED counts further below)'
+    MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_WARNING_VS_DYNAMIC_COUNTS = '(NOTE: these PREVIOUS_PROCESSING counts are NOT included in the below Known Status PROCESSED counts, but ARE included in the Dynamically Grouped PROCESSED counts further below)'
     ###
     # for the Summarizer's separate "PROCESSED duplicates" status line:
     MANIFEST_OUTPUT_STATUS_DUPLICATES_PROCESSED = "PROCESSED duplicates"
     MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_PROCESSED_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above PROCESSED counts, NOR in the Dynamically Grouped PROCESSED counts further below)"
     ###
-
+    # for the Summarizer's separate "PENDING_CHANGE duplicates" status line:
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_PENDING = "PENDING_CHANGE duplicates"
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_PENDING_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above PENDING_CHANGE* counts, NOR in the Dynamically Grouped PENDING_CHANGE counts further below)"
+    ###
+    # for the Summarizer's separate "NOT_FOUND duplicates" status line:
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_NOTFOUND = "NOT_FOUND duplicates"
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_NOTFOUND_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above NOT_FOUND counts, NOR in the Dynamically Grouped NOT_FOUND counts further below)"
+    ###
+    # for the Summarizer's separate "MULTIPLE_CHANGE_UUIDS duplicates" status line:
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_MULTIUUIDS = "ERROR_MULTIPLE_CHANGE_UUIDS duplicates"
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_MULTIUUIDS_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above ERROR_MULTIPLE_CHANGE_UUIDS counts, NOR in the Dynamically Grouped ERROR_MULTIPLE_CHANGE_UUIDS counts further below)"
+    ###
+    # for the Summarizer's separate "OTHER ERROR duplicates" status line:
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_ERROR_OTHERS = "ERROR_OTHER duplicates"
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_ERROR_OTHERS_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above OTHER ERROR counts, NOR in the Dynamically Grouped ERROR_* counts further below)"
+    ###
+    # for the Summarizer's separate "ZZZ-ONDECK-* duplicates" status line:
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_ONDECK = "ZZZ-ONDECK duplicates"
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_ONDECK_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above ZZZ-ONDECK-* counts, NOR in the Dynamically Grouped ZZZ-ONDECK-* counts further below)"
+    ###
+    # for the Summarizer's separate "PREVIOUS_PROCESSING-* duplicates" status line:
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_PREVIOUS = "PREVIOUS_PROCESSING duplicates"
+    MANIFEST_OUTPUT_STATUS_DUPLICATES_OF_PREVIOUS_WARNING_VS_DYNAMIC_COUNTS = "(NOTE: these counts are NOT included in the above PREVIOUS_PROCESSING* counts, NOR in the Dynamically Grouped PREVIOUS_PROCESSING counts further below)"
+    ###
 
     #####
     # TODO: use these _PREFIX and _MIDFIX at, e.g., each whynot_manifest_status, but...
@@ -343,7 +482,7 @@ class Settings:
     # (as used in cmd_dicom_summarize_status.py)
     ONDECK_OTHER_PREFIX="ZZZ-ONDECK-"
     ##########################################################
-    # alias to the above ONDECK_MULTIPLES_CHANGE_PREFIX (as used in module_gcp_dicom.py),
+    # alias to the above ONDECK_MULTIPLES_CHANGE_PREFIX,
     #   to accommodate variant naming elsewhere (in cmd_dicom_summarize_status.py):
     ONDECK_ERROR_MULTIPLE_CHANGE_UUIDS_PREFIX=ONDECK_MULTIPLES_CHANGE_PREFIX
     # TODO: align these, to remove such an alias
@@ -372,8 +511,6 @@ class Settings:
     ##########################################################
 
     # For Processing modules (and those that rely upon them, such as the Summarizer), define MIN and MAX Processing Phase:
-    DICOM_GCP_MIN_PROCESSING_PHASE = 2
-    DICOM_GCP_MAX_PROCESSING_PHASE = 5
     DICOM_ONPREM_MIN_PROCESSING_PHASE = 2
     DICOM_ONPREM_MAX_PROCESSING_PHASE = 5
 
@@ -386,6 +523,9 @@ class Settings:
     ENV_CONFIG_PATH = get_env_val("PATH_TO_CONFIG", def_val=ENV_CONFIG_PATH, print_cfg_out=True, verbose=True)
 
     config = yaml.safe_load(open('{0}/config.yaml'.format(ENV_CONFIG_PATH), 'r').read())
+
+    # persist an internal state for create_db_tables, to only invoke during 1st pass of create
+    ran_settings_create_db_tables = False
 
     ####################################################
     ####################################################
@@ -468,9 +608,22 @@ class Settings:
     LOCUTUS_TARGET_USE_ISILON = False
     LOCUTUS_TARGET_USE_ISILON = get_config_val(config, 'locutus_target_use_isilon', def_val=LOCUTUS_TARGET_USE_ISILON, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     LOCUTUS_TARGET_ISILON_PATH = None
+    LOCUTUS_TARGET_ISILON_PATH_IS_SAMBA = False
+    LOCUTUS_TARGET_ISILON_PATH_SAMBA_SERVER = None
+    LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_USER_VAULT_PATH = None
+    LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_PASS_VAULT_PATH = None
     if LOCUTUS_TARGET_USE_ISILON is not None and LOCUTUS_TARGET_USE_ISILON:
         num_targets_configured += 1
-        LOCUTUS_TARGET_ISILON_PATH = get_config_val(config, 'locutus_target_isilon_path', def_val='', print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        # 5/18/2026 NOTE: expanding LOCUTUS_TARGET_ISILON_PATH from get_config_val() to allow Jenkins-based overrides via get_env_or_config_val():
+        LOCUTUS_TARGET_ISILON_PATH = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_target_isilon_path', config, 'locutus_target_isilon_path', def_val='', print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        # That said, the other subsequent parms (_IS_SAMBA, _SAMBA_SERVER, _SAMBA_SA_*) shall still come straight from the CFG,
+        # since it should already be configured with a Samba Server & SA User/Pass for Jenkins OnPrem.
+        # NOTE: rather than using internal Business Logic for detecting implicit SAMBA in the above ISILON_PATH,
+        # instead, allow explicit config parms to be set (though only via config, not via the env & get_env_or_config_val() )
+        LOCUTUS_TARGET_ISILON_PATH_IS_SAMBA = get_config_val(config, 'locutus_target_isilon_path_is_samba', def_val='', print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        LOCUTUS_TARGET_ISILON_PATH_SAMBA_SERVER = get_config_val(config, 'locutus_target_isilon_path_samba_server', def_val='', print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_USER_VAULT_PATH = get_config_val(config, 'locutus_target_isilon_path_samba_SA_user_vault_path', def_val='', print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        LOCUTUS_TARGET_ISILON_PATH_SAMBA_SA_PASS_VAULT_PATH = get_config_val(config, 'locutus_target_isilon_path_samba_SA_pass_vault_path', def_val='', print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     #####################################
     # Locutus Target: GCP gs bucket:
     # TODO: first check to see that this is even in the various configs:
@@ -507,7 +660,7 @@ class Settings:
     # additional Locutus-specific configurations:
     # LOCUTUS_FORCE_SUCCESS to encourage any of the sub-modules to return a success
     # regardless of errors, such that more complex multiple call scenarios
-    # (such as Aperio's processing loop) will still print out any ERRORS/WARNINGS
+    # will still print out any ERRORS/WARNINGS
     # but will return a 0 rather than a non-0 error status (for non-fatal errors,
     # at least) since non-0 exits from a Dockerized job called by Jenkins can
     # cause the overall Jenkins job to halt, even if is more to process.
@@ -550,22 +703,22 @@ class Settings:
     # allow overnight testing of large manifests consisting of just a single unique test accession, repeated:
     LOCUTUS_ALLOW_PROCESSING_OF_DUPLICATES = False
     LOCUTUS_ALLOW_PROCESSING_OF_DUPLICATES = get_env_or_config_val(TYPE_BOOL, 'locutus_allow_processing_of_duplicates', config, 'locutus_allow_processing_of_duplicates', def_val=LOCUTUS_ALLOW_PROCESSING_OF_DUPLICATES, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
-    # a summarizer/stagecmp/gcp/onprem(TODO: CONFIRM!) option to automatically string any text from input manifest accessions:
+    # a deprecated summarizer/onprem option to automatically string any text from input manifest accessions:
     LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS = False
     LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_remove_text_from_input_accessions', config, 'locutus_dicom_remove_text_from_input_accessions', def_val=LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     print('WARNING: Settings() just configured LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS={0}.  '\
                 'Please note that this REMOVE_TEXT setting has been deprecated with the Juneteenth 2025 Upgrade '\
                 'to a friendlier alpha-numeric accession aware Locutus'.format(LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS), flush=True)
     ##############
-    # Migration: a gcp/onprem option to automatically no-longer-used (in the Stager) "zombie" changes/accessions from the Locutus tables, during Phase02 migration:
+    # Migration: an onprem option to automatically no-longer-used (in the Stager) "zombie" changes/accessions from the Locutus tables, during Phase02 migration:
     LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION = False
     LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_force_alphanum_reupgrade_during_migration', config, 'locutus_dicom_force_alphanum_reupgrade_during_migration', def_val=LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     ##############
-    # Migration: a gcp/onprem option to automatically no-longer-used (in the Stager) "zombie" changes/accessions from the Locutus tables, during Phase02 migration:
+    # Migration: an onprem option to automatically no-longer-used (in the Stager) "zombie" changes/accessions from the Locutus tables, during Phase02 migration:
     LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION = False
     LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_remove_zombie_change_seq_ids_at_migration', config, 'locutus_dicom_remove_zombie_change_seq_ids_at_migration', def_val=LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     ##############
-    # Migration: a gcp/onprem option to automatically bypass the Phase02 migration portion entirely, a hot fix to bypass it in the unusual event of failing migration:
+    # Migration: an onprem option to automatically bypass the Phase02 migration portion entirely, a hot fix to bypass it in the unusual event of failing migration:
     LOCUTUS_DICOM_BYPASS_MIGRATION = False
     LOCUTUS_DICOM_BYPASS_MIGRATION = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_bypass_migration', config, 'locutus_dicom_bypass_migration', def_val=LOCUTUS_DICOM_BYPASS_MIGRATION, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     #####################
@@ -579,7 +732,7 @@ class Settings:
     # to ensure that no jobs pick up any other jobs at the ending phase sweep
     # (following the manifest Phase 1-3, finding any stragglers for Phase 4 and Phase 5)
     # Should really, therefore, only set locutus_disable_phase_sweep to True when deploying concurrently.
-    # NOTE: currently only supported by Aperio & ONPREM/GCP DICOM (to eventually be used by all):
+    # NOTE: currently only supported by ONPREM DICOM (to eventually be used by all):
     #####################
     LOCUTUS_DISABLE_PHASE_SWEEP = False
     LOCUTUS_DISABLE_PHASE_SWEEP = get_env_or_config_val(TYPE_BOOL, 'locutus_disable_phase_sweep', config, 'locutus_disable_phase_sweep', def_val=LOCUTUS_DISABLE_PHASE_SWEEP, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
@@ -598,6 +751,53 @@ class Settings:
     LOCUTUS_WORKSPACES_ENABLE = get_env_or_config_val(TYPE_BOOL, 'locutus_workspaces_enable', config, 'locutus_workspaces_enable', def_val=LOCUTUS_WORKSPACES_ENABLE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     LOCUTUS_WORKSPACE_NAME = "default"
     LOCUTUS_WORKSPACE_NAME = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_workspace_name', config, 'locutus_workspace_name', def_val=LOCUTUS_WORKSPACE_NAME, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+
+    #####################
+    # Introducing... Locutus Batches!
+    # NOTE: as represented within each Locutus Workspace's MANIFEST & STATUS tables, as well as the global LOCUTUS_ALL_BATCHES_TABLE
+    #
+    # NOTE: first off, a special keyword NOOP batch, for NO-OPerations, effectively an accession-less DB batch for Migrators, etc.
+    LOCUTUS_NOOP_BATCH_NAME = 'NOOP'
+    LOCUTUS_NOOP_BATCH_LONG_NAME = 'NOOP (special NO-OPerations accession-less batch for Migrators and beyond)'
+    #
+    #WAS: LOCUTUS_BATCHES_ENABLE = False
+    #WAS: LOCUTUS_BATCHES_ENABLE = get_env_or_config_val(TYPE_BOOL, 'locutus_batches_enable', config, 'locutus_batches_enable', def_val=LOCUTUS_BATCHES_ENABLE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    # RENAME to more clearly higlight that the Preloader could still use a BATCH_NAME, but load *from* a MANIFEST CSV:
+    LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB = False
+    #WAS:     LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB = get_env_or_config_val(TYPE_BOOL, 'locutus_bypass_manifest_load_batch_from_DB', config, 'locutus_bypass_manifest_load_batch_from_DB', def_val=LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    # 3/27/2026 NOTE: clarify the above external CFG name to:
+    LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB = get_env_or_config_val(TYPE_BOOL, 'locutus_load_batch_from_DB_bypass_CSV_manifest', config, 'locutus_load_batch_from_DB_bypass_CSV_manifest', def_val=LOCUTUS_BYPASS_MANIFEST_LOAD_BATCH_FROM_DB, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    #
+    LOCUTUS_BATCH_NAME = ''
+    LOCUTUS_BATCH_NAME = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_name', config, 'locutus_batch_name', def_val=LOCUTUS_BATCH_NAME, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    ####
+    # And various Batch Filters, each as exact-matching quoted comma-separated lists:
+    # NOTE: these are initially/currently only to be made available to the DB-batches,
+    #   when bypassing a CSV manifest (since such manifests can easily be sub-divided manually)
+    # TODO: consider eventually allowing these to apply to the CSV manifest input as well(?)
+    #
+    # filter on manifest_status (exact matches):
+    # ex: locutus_batch_filter_statuses="PROCESSED, ZZZ-ONDECK-4-PROCESSING:mybatchsuffix, ERROR_PHASE03_DOWNLOAD_ISSUE"
+    LOCUTUS_BATCH_FILTER_STATUSES = ''
+    LOCUTUS_BATCH_FILTER_STATUSES = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_statuses', config, 'locutus_batch_filter_statuses', def_val=LOCUTUS_BATCH_FILTER_STATUSES, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    #
+    # filter on accession_num (exact matches):
+    # ex: locutus_batch_filter_accession_nums="1234AVH,12345BVH,123456CVH"
+    LOCUTUS_BATCH_FILTER_ACCESSION_NUMS = ''
+    LOCUTUS_BATCH_FILTER_ACCESSION_NUMS = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_accession_nums', config, 'locutus_batch_filter_accession_nums', def_val=LOCUTUS_BATCH_FILTER_ACCESSION_NUMS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    ####
+    #
+    # filter on last_datetime_processed (a single range, INCLUSIVE as a BETWEEN >= to <=):
+    # ex: locutus_batch_filter_processed_date_range="2026-04-01,2026-04-10"
+    LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE = ''
+    LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_processed_date_range', config, 'locutus_batch_filter_processed_date_range', def_val=LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    #### #### #### #### #### #### #### #### ####
+    #
+    # **AFTER THE ABOVE FILTERS***, also filter on the filtered subset's counter (a single range, INCLUSIVE as a BETWEEN >= to <=):
+    # ex: locutus_batch_filter_counter_range="1:10"
+    LOCUTUS_BATCH_FILTER_COUNTER_RANGE = ''
+    LOCUTUS_BATCH_FILTER_COUNTER_RANGE = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_counter_range', config, 'locutus_batch_filter_counter_range', def_val=LOCUTUS_BATCH_FILTER_COUNTER_RANGE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+    #
     #####################
 
     #####################
@@ -617,7 +817,6 @@ class Settings:
     ########################################################################################################
     # each sub-module specific configuration follows...
 
-
     ####################################################
     ####################################################
     # Configs for the Dicom_summarize_status command:
@@ -625,8 +824,8 @@ class Settings:
     # But first, an initial set of unknown defaults (in case subsequently overridden with environment variables):
     PROCESS_DICOM_SUMMARIZE_STATS = False
     LOCUTUS_DICOM_SUMMARIZE_STATS_MANIFEST_CSV = "unknown_LOCUTUS_DICOM_SUMMARIZE_STATS_INPUT_MANIFEST.csv"
-    # and, expected DICOM module table for the summarize/split (either "ONPREM or "GCP"):
-    LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE = "unknown_ONPREM_or_GCP"
+    # and, expected DICOM module table for the summarize/split (either "ONPREM or ???):
+    LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE = "unknown_ONPREM_or_???
     # and, an option to support more concise weekly manifest-driven stats-only summary reports:
     # (essentially a not LOCUTUS_DICOM_SUMMARIZE_STATS_ONLY_HIDE_ACCESSIONS)
     LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS = True
@@ -645,9 +844,12 @@ class Settings:
     # WARNING: a writable summarizer mode to help Preload accessions in a batch:
     LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST = False
     LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST_PREPROCESSING_SUFFIX = 'summarizerPreLoaded'
+    # NOTE: see also the Locutus-wide LOCUTUS_BATCHES_ENABLE & LOCUTUS_BATCH_NAME for the Preloader
     #####################
     # WARNING: a writable summarizer mode to help resolve multi-uuids:
     LOCUTUS_DICOM_SUMMARIZE_STATS_RESOLVE_MULTIUUIDS = False
+    LOCUTUS_DICOM_SUMMARIZE_STATS_RESOLVE_MULTIUUIDS_SUFFIX = 'resolved'
+    # NOTE: see also the Locutus-wide LOCUTUS_BATCHES_ENABLE & LOCUTUS_BATCH_NAME for the Preloader
     #####################
     # WARNING: a writable summarizer mode to help preset PROCESSING_MOMENTARILY* statuses prior to a force_reprocess, or similar::
     LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS = False
@@ -687,7 +889,7 @@ class Settings:
         # TODO: harmonize the following two key names across the config and env vars:
         LOCUTUS_DICOM_SUMMARIZE_STATS_MANIFEST_CSV = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_manifest_csv', config, 'dicom_summarize_stats_manifest_csv', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_MANIFEST_CSV, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
-        # expected DICOM module table for the summarize/split (either "ONPREM or "GCP"):
+        # expected DICOM module table for the summarize/split (either "ONPREM or "???"):
         # DONE: allow a drop-down for selection of these choices in Jenkins.
         LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_module', config, 'dicom_summarize_stats_module', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
@@ -698,10 +900,10 @@ class Settings:
         # with a summarizer option to help better investigate (and eventually resolve) multi-uuids, without needing to change the manifest:
         LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_MULTIUUIDS = get_env_or_config_val(TYPE_BOOL, 'dicom_summarize_stats_show_multiuuids', config, 'dicom_summarize_stats_show_multiuuids', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_MULTIUUIDS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         # and for both the SHOW_MULTIUUIDS and RESOLVE_MULTIUUIDS:
-        # NOTE: the following SUMMARIZE_DICOM_STAGE may be the same as the GCP_DICOM_STAGE &/or ONPREM_DICOM_STAGE:
+        # NOTE: the following SUMMARIZE_DICOM_STAGE may be the same as the ONPREM_DICOM_STAGE:
         LOCUTUS_DICOM_SUMMARIZE_STATS_STAGE_VAULT_PATH = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_dicom_stage_config_vault_path', config, 'dicom_summarize_dicom_stage_config_vault_path', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_STAGE_VAULT_PATH, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
-        # NOTE: GCP's Stage Vault Path was just via config, no env;
-        #   get_config_val(config, 'gcp_dicom_stage_config_vault_path', def_val=GCP_DICOM_STAGE_VAULT_PATH, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        # NOTE: OnPrem's Stage Vault Path was just via config, no env;
+        #   get_config_val(config, 'onprem_dicom_stage_config_vault_path', def_val=onprem_DICOM_STAGE_VAULT_PATH, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         # but we may want expose this Summarizer one to Jenkins....
         # ... at least, until we can update our config.yaml files into Vault
         #####################
@@ -715,16 +917,22 @@ class Settings:
         #####################
         # WARNING: a writable summarizer mode to help: preload_new_accessions_per_manifest:
         LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST = get_env_or_config_val(TYPE_BOOL, 'dicom_summarize_stats_preload_new_accessions_per_manifest', config, 'dicom_summarize_stats_preload_new_accessions_per_manifest', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
-        LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST_PREPROCESSING_SUFFIX = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix', config, 'dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST_PREPROCESSING_SUFFIX, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        if LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST:
+            LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST_PREPROCESSING_SUFFIX = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix', config, 'dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_PRELOAD_NEW_ACCESSIONS_PER_MANIFEST_PREPROCESSING_SUFFIX, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+            # NOTE: see also the Locutus-wide LOCUTUS_BATCHES_ENABLE & LOCUTUS_BATCH_NAME for the Preloader
+
         #####################
         # WARNING: a writable summarizer mode to help resolve multi-uuids:
         # see also LOCUTUS_DICOM_SUMMARIZE_STATS_ENABLE_DB_UPDATES for:
         LOCUTUS_DICOM_SUMMARIZE_STATS_RESOLVE_MULTIUUIDS = get_env_or_config_val(TYPE_BOOL, 'dicom_summarize_stats_resolve_multiuuids', config, 'dicom_summarize_stats_resolve_multiuuids', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_RESOLVE_MULTIUUIDS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        if LOCUTUS_DICOM_SUMMARIZE_STATS_RESOLVE_MULTIUUIDS:
+            LOCUTUS_DICOM_SUMMARIZE_STATS_RESOLVE_MULTIUUIDS_SUFFIX = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_resolve_multiuuids_suffix', config, 'dicom_summarize_stats_resolve_multiuuids_suffix', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_RESOLVE_MULTIUUIDS_SUFFIX, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
         # WARNING: a writable summarizer mode to help resolve multi-uuids:
         # see also LOCUTUS_DICOM_SUMMARIZE_STATS_ENABLE_DB_UPDATES for:
         LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS = get_env_or_config_val(TYPE_BOOL, 'dicom_summarize_stats_preset_reprocessing_status', config, 'dicom_summarize_stats_preset_reprocessing_status', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
-        LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS_SUFFIX = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_preset_reprocessing_status_suffix', config, 'dicom_summarize_stats_preset_reprocessing_status_suffix', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS_SUFFIX, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        if LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS:
+            LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS_SUFFIX = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_preset_reprocessing_status_suffix', config, 'dicom_summarize_stats_preset_reprocessing_status_suffix', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_PRESET_REPROCESSING_STATUS_SUFFIX, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################  ##################### #####################
         #####################
         # as well as a pointer to the Stager DB (no need for a full Vault path, merely its name)
@@ -742,7 +950,6 @@ class Settings:
         #####################
         ##################### ##################### ##################### ##################### #####################
         ##################### ##################### ##################### ##################### #####################
-
 
 
     ####################################################
@@ -847,7 +1054,7 @@ class Settings:
     # And now, the optional configurations:
     PROCESS_ONPREM_DICOM_IMAGES = get_env_or_config_val(TYPE_BOOL, 'process_onprem_dicom_images', config, 'process_onprem_dicom_images', def_val=PROCESS_ONPREM_DICOM_IMAGES, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     #####################
-    # a ONPREM-DICOM-specific (as from GCP-DICOM) testing option to force the reprocessing of an accession numbers status record,
+    # a ONPREM-DICOM-specific testing option to force the reprocessing of an accession numbers status record,
     # to allow easily re-running the same accession # for benchmarking purposes, etc.,
     LOCUTUS_ONPREM_DICOM_FORCE_REPROCESS_ACCESSION_STATUS = get_env_or_config_val(TYPE_BOOL, 'locutus_debug_onprem_dicom_force_reprocess_accession_status', config, 'locutus_debug_onprem_dicom_force_reprocess_accession_status', def_val=LOCUTUS_ONPREM_DICOM_FORCE_REPROCESS_ACCESSION_STATUS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     # NOTE: moved ^^^^ UP HERE, rather than below, to be read by the Summarizer, even if *NOT* PROCESS_ONPREM_DICOM_IMAGES
@@ -871,16 +1078,16 @@ class Settings:
         # TODO: harmonize the following two key names across the config and env vars:
         LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV = get_env_or_config_val(TYPE_NON_BOOL, 'onprem_dicom_images_manifest', config, 'locutus_onprem_dicom_input_manifest_csv', def_val=LOCUTUS_ONPREM_DICOM_INPUT_MANIFEST_CSV, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
-        # a ONPREM-DICOM-specific (as from GCP-DICOM) testing option to force the reprocessing of an accession numbers status record,
+        # a ONPREM-DICOM-specific testing option to force the reprocessing of an accession numbers status record,
         # to allow easily re-running the same accession # for benchmarking purposes, etc.,
         # MOVED UP: LOCUTUS_ONPREM_DICOM_FORCE_REPROCESS_ACCESSION_STATUS = get_env_or_config_val(TYPE_BOOL, 'locutus_debug_onprem_dicom_force_reprocess_accession_status', config, 'locutus_debug_onprem_dicom_force_reprocess_accession_status', def_val=LOCUTUS_ONPREM_DICOM_FORCE_REPROCESS_ACCESSION_STATUS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         # NOTE: moved ^^^^ UP to be read by the Summarizer, even if *NOT* PROCESS_ONPREM_DICOM_IMAGES
         #####################
-        # a ONPREM-DICOM-specific (as from GCP-DICOM) testing option to allow the pre-deletion of an accession numbers status record,
+        # a ONPREM-DICOM-specific testing option to allow the pre-deletion of an accession numbers status record,
         # to allow easily re-running the same accession # for benchmarking purposes, etc.,
         LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS = get_env_or_config_val(TYPE_BOOL, 'locutus_debug_onprem_dicom_predelete_accession_status', config, 'locutus_debug_onprem_dicom_predelete_accession_status', def_val=LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
-        # a ONPREM-DICOM-specific (GCP-DICOM to have its own) to allow the pre-retire of an accession numbers manifest attributes,
+        # a ONPREM-DICOM-specific to allow the pre-retire of an accession numbers manifest attributes,
         # by updating its accession_num to a negative of itself
         # to allow easily re-running the same accession # for benchmarking purposes, etc.,
         LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS = get_env_or_config_val(TYPE_BOOL, 'locutus_debug_onprem_dicom_preretire_accession_status', config, 'locutus_debug_onprem_dicom_preretire_accession_status', def_val=LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
@@ -893,7 +1100,6 @@ class Settings:
         # TODO: perhaps rename the following more appropriately to mention PHASE_SWEEP, if so specific?
         # or, at least further investigate how this differs from the above LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS_ONLY_CHANGED....
         # as it might not be specific to PHASE_SWEEPS (?)
-        # TODO: consider whether or not it needs to likewise be included in the GCP module.
         LOCUTUS_ONPREM_DICOM_ALLOW_CONTINUED_PROCESSING_IF_ONLY_CFGS_CHANGED = get_env_or_config_val(TYPE_BOOL, 'locutus_debug_onprem_dicom_allow_continued_processing_if_only_cfgs_changed', config, 'locutus_debug_onprem_dicom_allow_continued_processing_if_only_cfgs_changed', def_val=LOCUTUS_ONPREM_DICOM_ALLOW_CONTINUED_PROCESSING_IF_ONLY_CFGS_CHANGED, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
         #  NOTE: prior to 3/24/2025 LOCUTUS_ONPREM_DICOM_USE_ZIP_ARCHIVE_STRUCTURE was absent ~= False == DICOMDIR (flat IMAGES/IM** structure) = LOCUTUS_ONPREM_DICOM_USE_ZIP_ARCHIVE_STRUCTURE
@@ -915,27 +1121,894 @@ class Settings:
         ##################### ##################### ##################### ##################### #####################
         ##################### ##################### ##################### ##################### #####################
 
-
     ##################### ##################### ##################### ##################### #####################
     ##################### ##################### ##################### ##################### #####################
 
     ########################################## ########################################## #####################
     # Settings methods for other classes to enjoy:
 
-    # an ASCII to Integer implementation to assist with any of the modules w/ LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS
-    def atoi(s):
-        # ascii to int, assuming unsigned base10, merely ignoring any other characters whilst building up the int,
-        # e.g., "+-0abc123de45xy6z" -> 123456
-        rtr=0
-        for c in s:
-            if ord(c) in range(ord('0'),ord('0')+10):
-                rtr=rtr*10 + ord(c) - ord('0')
-        return rtr
+    def __init__(self):
+        # Settings class START of init() being called, printing this PRIOR to even checking VERBOSE', flush=True)
+        if self.LOCUTUS_VERBOSE:
+            print('VERBOSE: {0}.init() says Hi'.format(CLASS_PRINTNAME), flush=True)
+        # NOTE:MANIFEST_READER=part0a-ALT:
+        # for CSV manifest:
+        self.manifest_infile = None
+        self.manifest_reader = None
+        self.manifest_counter = 0
+        # BATCHES NOTE: for manifest-once Batch query in the Workspace via SQL:
+        self.batch_cursor = None
+        self.batch_cursor_clause_all = ''
+        self.batch_cursor_clause_filter_only = ''
+        self.batch_cursor_counter = 0
+        self.batch_cursor_MAX_counter = -1
+        # NOTE: ^^^^^ above now as the batch_filter'd version;
+        # NOTE: vvvvv below as full raw unfiltered account:
+        self.batch_cursor_MAX_counter_unfiltered = -1
+        # AND, looking like the following is needed for BATCH as well as CSV:
+        # STARTING w/ a BOGUS column of 0,
+        # KNOWING that we'll really be needing column 2 for accessions
+        # as per open_batch_cursor():
+        self.input_manifest_source_column = 0
+        self.manifest_header_ver = None
+
+        # DEV NOTE of 4/23/2026: this Settings.__init__() did NOT seem to previously be called;
+        # UPDATED main_locutus to explicitly instantiate such a local Settings object as ourSettings.
+
+        # BATCHES NOTE: introducing batch filters:
+        batch_filter_errors = 0
+        ###############
+        # filter on manifest_status (exact matches of comma-separated values):
+        # LOCUTUS_BATCH_FILTER_STATUSES = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_statuses', config, 'locutus_batch_filter_statuses', def_val=LOCUTUS_BATCH_FILTER_STATUSES, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        # ex: locutus_batch_filter_status="PROCESSED,ZZZ-ONDECK-4-PROCESSING:mybatchsuffix,ERROR_PHASE03_DOWNLOAD_ISSUE"
+        self.batch_filter_statuses_list = []
+        if self.LOCUTUS_BATCH_FILTER_STATUSES and len(self.LOCUTUS_BATCH_FILTER_STATUSES):
+            if len(self.LOCUTUS_BATCH_FILTER_STATUSES.split(',')) < 1:
+                print('r3m0 Settings __init__: ERROR parsing LOCUTUS_BATCH_FILTER_STATUSES from \"{0}\"; expect at least one such status between commas'.format(
+                    self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE), flush=True)
+                # TODO: raise an exception here, or queue these up and await ALL such batch_filter errors?
+                batch_filter_errors += 1
+            else:
+                # NOTE: comma-separated values, to better support integration from Jenkins to the Docker container:
+                self.batch_filter_statuses_list = self.LOCUTUS_BATCH_FILTER_STATUSES.split(',')
+
+                num_batch_filter_statuses = len(self.batch_filter_statuses_list)
+                if self.LOCUTUS_VERBOSE:
+                    print('r3m0 Settings __init__: parsed {0} LOCUTUS_BATCH_FILTER_STATUSES from \"{1}\" to: {2}.'.format(
+                        num_batch_filter_statuses,
+                        self.LOCUTUS_BATCH_FILTER_STATUSES,
+                        ' OR '.join(self.batch_filter_statuses_list)), flush=True)
+
+        ###############
+        # filter on accession_num (exact matches of comma-separated values):
+        # LOCUTUS_BATCH_FILTER_ACCESSION_NUMS = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_accession_nums', config, 'locutus_batch_filter_accession_nums', def_val=LOCUTUS_BATCH_FILTER_ACCESSION_NUMS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        # ex: locutus_batch_filter_accession_num="1234AVH,12345BVH,123456CVH"
+        self.batch_filter_accessions_list = []
+        if self.LOCUTUS_BATCH_FILTER_ACCESSION_NUMS and len(self.LOCUTUS_BATCH_FILTER_ACCESSION_NUMS):
+            if len(self.LOCUTUS_BATCH_FILTER_ACCESSION_NUMS.split(',')) < 1:
+                print('r3m0 Settings __init__: ERROR parsing LOCUTUS_BATCH_FILTER_ACCESSION_NUMS from \"{0}\"; expect at least one such accession_num between commas'.format(
+                    self.LOCUTUS_BATCH_FILTER_ACCESSION_NUMS), flush=True)
+                # TODO: raise an exception here, or queue these up and await ALL such batch_filter errors?
+                batch_filter_errors += 1
+            else:
+                # NOTE: comma-separated values, to better support integration from Jenkins to the Docker container:
+                self.batch_filter_accessions_list = self.LOCUTUS_BATCH_FILTER_ACCESSION_NUMS.split(',')
+
+                num_batch_filter_accessions = len(self.batch_filter_accessions_list)
+                if self.LOCUTUS_VERBOSE:
+                    print('r3m0 Settings __init__: parsed {0} LOCUTUS_BATCH_FILTER_ACCESSION_NUMS from \"{1}\" to: {2}.'.format(
+                        num_batch_filter_accessions,
+                        self.LOCUTUS_BATCH_FILTER_ACCESSION_NUMS,
+                        ' OR '.join(self.batch_filter_accessions_list)), flush=True)
+
+        ###############
+        # filter on last_datetime_processed (a single range, INCLUSIVE as a BETWEEN >= to <=):
+        # LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_processed_date_range', config, 'locutus_batch_filter_processed_date_range', def_val=LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        # ex: locutus_batch_filter_accession_num="2026-04-01:2026-04-10"
+        self.batch_filter_date_from = None
+        self.batch_filter_date_to = None
+        if self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE and len(self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE):
+            delim_count = self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE.count(':')
+            if delim_count != 1:
+                print('r3m0 Settings __init__: ERROR parsing LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE from \"{0}\"; expect 1 and only 1 \':\''.format(
+                    self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE), flush=True)
+                # TODO: raise an exception here, or queue these up and await ALL such batch_filter errors?
+                batch_filter_errors += 1
+            else:
+                delim_pos = self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE.find(':')
+                self.batch_filter_date_from = self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE[0:delim_pos].strip()
+                self.batch_filter_date_to = self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE[delim_pos+1:].strip()
+                if self.LOCUTUS_VERBOSE:
+                    print('r3m0 Settings __init__: parsed LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE from \"{0}\" to FROM=\"{1}\" TO=\"{2}\".'.format(
+                        self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE,
+                        self.batch_filter_date_from,
+                        self.batch_filter_date_to), flush=True)
+
+        ###############
+        # **AFTER THE ABOVE FILTERS***, also filter on the filtered subset's counter (a single range, INCLUSIVE as a BETWEEN >= to <=):
+        # LOCUTUS_BATCH_FILTER_COUNTER_RANGE = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_counter_range', config, 'locutus_batch_filter_counter_range', def_val=LOCUTUS_BATCH_FILTER_COUNTER_RANGE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        # ex: locutus_batch_filter_counter="1:10"
+        self.batch_filter_counter_from = None
+        self.batch_filter_counter_to = None
+        if self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE and len(self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE):
+            delim_count = self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE.count(':')
+            if delim_count != 1:
+                print('r3m0 Settings __init__: ERROR parsing LOCUTUS_BATCH_FILTER_COUNTER_RANGE from \"{0}\"; expect 1 and only 1 \':\''.format(
+                    self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE), flush=True)
+                # TODO: raise an exception here, or queue these up and await ALL such batch_filter errors?
+                batch_filter_errors += 1
+            else:
+                delim_pos = self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE.find(':')
+                self.batch_filter_counter_from = self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE[0:delim_pos].strip()
+                self.batch_filter_counter_to = self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE[delim_pos+1:].strip()
+                if self.LOCUTUS_VERBOSE:
+                    print('r3m0 Settings __init__: parsed LOCUTUS_BATCH_FILTER_COUNTER_RANGE from \"{0}\" to FROM=\"{1}\" TO=\"{2}\".'.format(
+                        self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE,
+                        self.batch_filter_counter_from,
+                        self.batch_filter_counter_to), flush=True)
+
+        ###############
+        if batch_filter_errors:
+            print('ERROR: Settings.__init__() encountered {0} errors while parsing the various LOCUTUS_BATCH_FILTER* settings;  '\
+                'Please see above for more details.'.format(batch_filter_errors), flush=True)
+            raise ValueError('Settings.__init__() encountered {0} errors while parsing the various LOCUTUS_BATCH_FILTER* settings; '\
+                'Please see log for more details.'.format(batch_filter_errors))
 
 
-    # a minimal Integer to ASCII implementation to assist with any of the modules w/ LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS
-    def itoa(num):
-        return str(num)
+    def insert_batches_table(self, LocutusDBconnSession, module, workspace, batch_insert_val, accession_num, new_active, new_manifest_status, new_subject_id):
+        # UPDATES: LOCUTUS_ALL_BATCHES_TABLE
+
+        if self.LOCUTUS_VERBOSE:
+            print('r3m0 DEBUG: insert_batches_table() called for module=\'{0}\'/workspace=\'{1}\'/batch_insert_val={2} for accession_num=\'{3}\': '\
+                'new_active={4}, new_subject_id=\'{5}\', new_manifest_status=\'{6}\'.'.format(
+                module, workspace, batch_insert_val, accession_num, new_active, new_subject_id, new_manifest_status), flush=True)
+
+        new_accession_num = accession_num
+        if not new_active:
+            # NOTE: with such an INSERT, this SHOULD always be active, but alas, ya never know ;-)
+            # if effectively retiring, then negate the accession_num:
+            new_accession_num = '-{0}'.format(accession_num)
+
+        # NOTE: leave batch_insert_val as UNQUOTED, since it could be NULL or a quoted string:
+        insert_batches_sql='INSERT INTO {0} ( '\
+                            'accession_num, '\
+                            'module, '\
+                            'workspace, '\
+                            'batch_name, '\
+                            'subject_id, '\
+                            'manifest_status, '\
+                            'last_datetime_processed, '\
+                            'active '\
+                            ' ) VALUES ('\
+                            '\'{1}\', '\
+                            '\'{2}\', '\
+                            '\'{3}\', '\
+                            '{4}, '\
+                            '\'{5}\', '\
+                            '\'{6}\', '\
+                            'now() ,'\
+                            '{7} '\
+                            ' ) ;'.format(
+                            self.LOCUTUS_ALL_BATCHES_TABLE,
+                            new_accession_num,
+                            module,
+                            workspace,
+                            batch_insert_val,
+                            new_subject_id,
+                            new_manifest_status,
+                            new_active )
+                ##############################
+
+        if insert_batches_sql and len(insert_batches_sql):
+            if self.LOCUTUS_VERBOSE:
+                print(self.SQL_OUT_PREFIX, insert_batches_sql, flush=True)
+            LocutusDBconnSession.execute(insert_batches_sql)
+        # end o' insert_batches_table()
+
+
+    def update_batches_table(self, LocutusDBconnSession, module, workspace, batch_clause, accession_num, new_active, new_manifest_status=None, new_subject_id=None):
+        # UPDATES: LOCUTUS_ALL_BATCHES_TABLE
+
+        if self.LOCUTUS_VERBOSE:
+            print('r3m0 DEBUG: update_batches_table() called for module=\'{0}\'/workspace=\'{1}\'/batch_clause=\"{2}\" for accession_num=\'{3}\': '\
+                'new_active={4}, new_subject_id=\'{5}\', new_manifest_status=\'{6}\'.'.format(
+                module, workspace, batch_clause, accession_num, new_active, new_subject_id, new_manifest_status), flush=True)
+
+        new_accession_num = accession_num
+        if not new_active:
+            # if effectively retiring, then negate the accession_num:
+            # NOTE: might be no need for a corresponding Settings.retire_batch_record() to negate the accession_num.
+            new_accession_num = '-{0}'.format(accession_num)
+
+        optional_subject_clause = ''
+        if new_subject_id:
+            # NOTE: includes comma, so be sure to omit one in the corresponding _sql:
+            optional_subject_clause = 'subject_id=\'{0}\','.format(new_subject_id)
+
+        optional_manifest_status_clause = ''
+        if new_manifest_status:
+            # NOTE: includes comma, so be sure to omit one in the corresponding _sql:
+            optional_manifest_status_clause = 'manifest_status=\'{0}\', '.format(new_manifest_status)
+
+        # NOTE: leave batch_clause as UNQUOTED, since it could be NULL or a quoted string:
+        update_batches_sql='UPDATE {0} SET '\
+                            'accession_num=\'{1}\', '\
+                            'active={2}, '\
+                            '{3} '\
+                            '{4} '\
+                            'last_datetime_processed=now() '\
+                            'WHERE accession_num=\'{5}\' '\
+                            'AND module=\'{6}\' '\
+                            'AND workspace=\'{7}\' '\
+                            'AND active {8} ;'.format(
+                            self.LOCUTUS_ALL_BATCHES_TABLE,
+                            new_accession_num,
+                            new_active,
+                            optional_subject_clause,
+                            optional_manifest_status_clause,
+                            accession_num,
+                            module,
+                            workspace,
+                            batch_clause)
+                ##############################
+
+        if update_batches_sql and len(update_batches_sql):
+            if self.LOCUTUS_VERBOSE:
+                print(self.SQL_OUT_PREFIX, update_batches_sql, flush=True)
+            LocutusDBconnSession.execute(update_batches_sql)
+        # end o' update_batches_table()
+
+
+    def open_batch_cursor(self, LocutusDBconnSession, module, manifest_table, batch_name):
+        # NOTE:MANIFEST_READER=part0b-ALT:
+        # UPDATES: settings.batch_cursor, settings.batch_cursor_MAX_counter, settings.batch_cursor_MAX_counter_unfiltered, settings.batch_cursor_counter
+
+        # RESET our batch cursor state:
+        self.batch_cursor = None
+        self.batch_cursor_MAX_counter_unfiltered = -1
+        self.batch_cursor_MAX_counter = -1
+        self.batch_cursor_counter = 0
+
+        # AND, even though typically for CSV manifests, reuse the following, as via Setup():
+        self.input_manifest_type = MANIFEST_TYPE_DEFAULT_SIMPLIFIED
+        self.input_manifest_source_column = 0
+        self.input_manifest_version = MANIFEST_TYPE_DEFAULT_SIMPLIFIED
+        self.manifest_header_ver = ''
+        if (module.upper() == DICOM_MODULE_ONPREM):
+            # DICOM_MODULE_ONPREM's standard manifest format:
+            self.input_manifest_type = ONPREM_MANIFEST_TYPE
+            self.input_manifest_source_column = ONPREM_MANIFEST_SOURCE_COLUMN_OFFSET
+            self.input_manifest_version = ONPREM_MANIFEST_HEADER_MANIFEST_VER
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.open_batch_cursor() found module={1} GIVES input_manifest_type=ONPREM_MANIFEST_TYPE={2}.'.format(
+                        CLASS_PRINTNAME,
+                        module,
+                        self.input_manifest_type), flush=True)
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.open_batch_cursor() called for module={1}, now has settings.input_manifest_type={2}.'.format(
+                        CLASS_PRINTNAME,
+                        module,
+                        self.input_manifest_type), flush=True)
+
+        ##########
+        # NOTE: see also preload_accession() w/ further NOTES,
+        # including of batch_only implying a NOT NULL batch_name.
+        self.batch_cursor_clause_all = ''
+        # NOTE: and a batch_cursor_clause_filter_only, set as ONLY the batch_filters_clause
+        self.batch_cursor_clause_filter_only = ''
+
+        # regardless of VERBOSE? if settings.LOCUTUS_VERBOSE:
+        print('{0}.open_batch_cursor() called for module={1}, manifest_table={2}, and batch_name={3}'.format(
+                    CLASS_PRINTNAME,
+                    module,
+                    manifest_table,
+                    batch_name), flush=True)
+
+        # NOTE: first off, check for the special keyword NOOP batch:
+        # NOTE: LOCUTUS_NOOP_BATCH_NAME = 'NOOP'
+        if batch_name == self.LOCUTUS_NOOP_BATCH_NAME:
+            # NOTE: Replace the keyword special name with its long name for descriptive purposes:
+            # NOTE: LOCUTUS_NOOP_BATCH_LONG_NAME = 'NOOP (special NO-OPerations accession-less batch for Migrators and beyond)'
+            batch_name = self.LOCUTUS_NOOP_BATCH_LONG_NAME
+            # Furthermore, need to be sure to OVERRIDE the self.LOCUTUS_BATCH_NAME
+            self.LOCUTUS_BATCH_NAME = batch_name
+
+            # NOTE: for NO-OPerations, effectively an accession-less DB batch for Migrators, etc.
+            # leaving all at the RESET batch cursor state:
+            print('{0}.open_batch_cursor() found special keyword NOOP batch_name={1} == {2}; closing off w/ empty cursor'.format(
+                    CLASS_PRINTNAME,
+                    self.LOCUTUS_NOOP_BATCH_NAME,
+                    batch_name), flush=True)
+
+            # TODO: Q: any other cursory things to set?
+            # Nawww, looks good, even printing the -1 for:
+            #   -1,TOTAL_ACCESSIONS_IN_DB_BATCH
+            #   -1,SUBTOTAL_ACCESSIONS_IN_FILTERED_DB_BATCH
+            # while leaving a trailing (and, redundantly labelled!) loop-count:
+            #   0,TOTAL_ACCESSIONS_IN_DB_BATCH
+
+            # AND: bail early:
+            return
+
+        ####
+        # NOTE: for reference from above, here are the new various Batch Filters, each as exact-matching quoted comma-separated lists:
+        #
+        # NOTE: these are initially/currently only to be made available to the DB-batches,
+        #   when bypassing a CSV manifest (since such manifests can easily be sub-divided manually)
+        # TODO: consider eventually allowing these to apply to the CSV manifest input as well(?)
+        #
+        # filter on manifest_status (exact matches):
+        # ex: locutus_batch_filter_statuses="PROCESSED,ZZZ-ONDECK-4-PROCESSING:mybatchsuffix,ERROR_PHASE03_DOWNLOAD_ISSUE"
+        #LOCUTUS_BATCH_FILTER_STATUSES = ''
+        #LOCUTUS_BATCH_FILTER_STATUSES = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_statuses', config, 'locutus_batch_filter_statuses', def_val=LOCUTUS_BATCH_FILTER_STATUSES, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        #
+        # filter on accession_num (exact matches):
+        # ex: locutus_batch_filter_accession_num="1234AVH,12345BVH,123456CVH"
+        #LOCUTUS_BATCH_FILTER_ACCESSION_NUMS = ''
+        #LOCUTUS_BATCH_FILTER_ACCESSION_NUMS = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_accession_nums', config, 'locutus_batch_filter_accession_nums', def_val=LOCUTUS_BATCH_FILTER_ACCESSION_NUMS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        #
+        # filter on last_datetime_processed (exact matches for a single range, INCLUSIVE as a BETWEEN >= to <=):
+        # ex: locutus_batch_filter_processed_date_range="2026-04-01,2026-04-10"
+        #LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE = ''
+        #LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_processed_date_range', config, 'locutus_batch_filter_processed_date_range', def_val=LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        #
+        # **AFTER THE ABOVE FILTERS***, also filter on the filtered subset's counter (a single range, INCLUSIVE as a BETWEEN >= to <=):
+        # ex: locutus_batch_filter_counter_range="1:10"
+        #LOCUTUS_BATCH_FILTER_COUNTER_RANGE = ''
+        #LOCUTUS_BATCH_FILTER_COUNTER_RANGE = get_env_or_config_val(TYPE_NON_BOOL, 'locutus_batch_filter_counter_range', config, 'locutus_batch_filter_counter_range', def_val=LOCUTUS_BATCH_FILTER_COUNTER_RANGE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        ####
+        ####
+        # Whether or not VERBOSE, emit info about each of these filters as they build up into the batch cursor itself:
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.open_batch_cursor() parsing.... batch_filters of LOCUTUS_BATCH_FILTER_STATUSES={1} '\
+                '*and* LOCUTUS_BATCH_FILTER_ACCESSION_NUMS={2}, '\
+                '*and* LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE={3}, '\
+                '*and* an AFTER-filter LOCUTUS_BATCH_FILTER_COUNTER_RANGE={4}'.format(
+                    CLASS_PRINTNAME,
+                    self.LOCUTUS_BATCH_FILTER_STATUSES,
+                    self.LOCUTUS_BATCH_FILTER_ACCESSION_NUMS,
+                    self.LOCUTUS_BATCH_FILTER_PROCESSED_DATE_RANGE,
+                    self.LOCUTUS_BATCH_FILTER_COUNTER_RANGE), flush=True)
+
+        ####
+        # NOTE: show the parsed version of the above raw filters, joining the lists, etc
+        # AND: create an overall batch_filters_str of something like 'AND .... AND ...' for any so defined,
+        # AND: be sure to calculate total batch size counts w/o and then w/ the filter, perhaps adding one more MAX var of MAX_unfiltered?
+        ####
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.open_batch_cursor() utilizing.... batch_filters of batch_filter_statuses_list={1}, '\
+                '*and* batch_filter_accessions_list={2}, '\
+                '*and* batch_filter_date_from/to={3}/{4}, '\
+                '*and* an AFTER-filter batch_filter_counter_from/to={5}/{6}'.format(
+                    CLASS_PRINTNAME,
+                    ' OR '.join(self.batch_filter_statuses_list),
+                    ' OR '.join(self.batch_filter_accessions_list),
+                    self.batch_filter_date_from, self.batch_filter_date_to,
+                    self.batch_filter_counter_from, self.batch_filter_counter_to), flush=True)
+
+        # add the batch_cursor_clause_all to the Where clause, if so defined:
+        if not batch_name or not len(batch_name):
+            self.batch_cursor_clause_all = 'AND batch_name IS NULL '
+        else:
+            self.batch_cursor_clause_all = 'AND batch_name=\'{0}\' '.format(batch_name)
+
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.open_batch_cursor(): Opening SQL cursor on MANIFEST table \'{1}\' for BATCH_NAME=\'{2}\' w/ batch_cursor_clause=\"{3}\"...'.format(
+                                CLASS_PRINTNAME,
+                                manifest_table,
+                                batch_name,
+                                self.batch_cursor_clause_all),
+                                flush=True)
+
+        # NOTE: first doing a COUNT of how many might match this batch:
+        # NOTE: leave self.batch_cursor_clause_all as UNQUOTED, since it could be NULL or a quoted string:
+        batch_cursor_count_sql_select='SELECT COUNT(DISTINCT(accession_num)) as num_accs_in_batch '\
+                                        'FROM {0} WHERE '\
+                                        'active {1} ;'.format(
+                                        manifest_table,
+                                        self.batch_cursor_clause_all)
+        if self.LOCUTUS_VERBOSE:
+            print('{0}-- # DB=Locutus, Table={1}'.format(self.SQL_OUT_PREFIX, manifest_table), flush=True)
+            print('{0}-- # {1}'.format(self.SQL_OUT_PREFIX, batch_cursor_count_sql_select), flush=True)
+
+        ###################
+        # DO IT! Go ahead and actually execute that batch_cursor_sql_select to open up the batch_cursor:
+        temp_batch_count_cursor =  LocutusDBconnSession.execute(batch_cursor_count_sql_select)
+        # AND ONLY FOR TESTING:
+        temp_batch_count_cursor_result = temp_batch_count_cursor.fetchone()
+        if self.LOCUTUS_VERBOSE:
+            print('{0}-- # {1}'.format(self.SQL_OUT_PREFIX, temp_batch_count_cursor_result), flush=True)
+        self.batch_cursor_MAX_counter = temp_batch_count_cursor_result['num_accs_in_batch']
+        self.batch_cursor_MAX_counter_unfiltered = self.batch_cursor_MAX_counter
+
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.open_batch_cursor() FOUND unfiltered batch_name={1} to have {2} DISTINCT(accession_num).'.format(
+                    CLASS_PRINTNAME,
+                    batch_name,
+                    self.batch_cursor_MAX_counter_unfiltered), flush=True)
+
+        # NOTE: ^^^^^ above as full raw unfiltered account;
+
+        # add a batch_filters_clause to the Where clause, if so defined:
+        ##########
+        # NOTE: see also preload_accession() w/ further NOTES,
+        # including of batch_only implying a NOT NULL batch_name.
+        batch_filters_clause = ''
+
+        if self.batch_filter_statuses_list and len(self.batch_filter_statuses_list) > 0:
+            #WAS: batch_filters_clause += 'AND manifest_status in (\'{0}\') '.format('\', \''.join(self.batch_filter_statuses_list))
+            batch_filters_clause += 'AND ( '
+
+            # ONLY the non-WILDCARD remainders, in a 1-by-1 loop
+            # IDEALLY, would be nice to have at least one non-WILDCARD in here, so as to not have an empty IN list.
+            #
+            # EASIEST QUICKEST WAY, though, just go ahead and include the ERROR_WILDCARD and ZZZ-ONDECK_WILDCARD,
+            # as they shouldn't result in any additional finds, LOL:
+            batch_filters_clause += 'manifest_status IN (\'{0}\') '.format('\', \''.join(self.batch_filter_statuses_list))
+
+            # NOTE: hardcoding special case wildcards, rather than allowing a more general purpose support of WILDCARDS
+
+            if 'ERROR_WILDCARD' in self.batch_filter_statuses_list:
+                # NOTE: allow selection of ERRORS with spaces in their status, because such spaces can be tricky to pass on from Jenkins:
+                batch_filters_clause += 'OR manifest_status LIKE \'ERROR_%\' '
+
+            if 'ZZZ_WILDCARD' in self.batch_filter_statuses_list:
+                # WAS: ZZZ-ONDECK_WILDCARD, but shortening to ZZZ_WILDCARD to align with ERROR_WILDCARD
+                batch_filters_clause += 'OR manifest_status LIKE \'ZZZ-ONDECK%\' '
+
+            if 'PENDING_WILDCARD' in self.batch_filter_statuses_list:
+                # Allow a quick pick of both: PENDING_CHANGE and ZZZ-ONDECK-PENDING_CHANGE:suffix:
+                batch_filters_clause += 'OR manifest_status LIKE \'%PENDING_CHANGE%\' '
+
+            if 'MULTIUUID_WILDCARD' in self.batch_filter_statuses_list:
+                # Allow a quick pick of both: ERROR_MULTIPLE_CHANGE_UUIDS and ZZZ-ONDECK-2-RESOLVE-ERROR_MULTIPLE_CHANGE_UUIDS:suffix:
+                batch_filters_clause += 'OR manifest_status LIKE \'%ERROR_MULTIPLE_CHANGE_UUIDS%\' '
+
+            batch_filters_clause += ') '
+
+        if self.batch_filter_accessions_list and len(self.batch_filter_accessions_list) > 0:
+            batch_filters_clause += 'AND accession_num in (\'{0}\') '.format('\', \''.join(self.batch_filter_accessions_list))
+
+        if self.batch_filter_date_from:
+            batch_filters_clause += 'AND last_datetime_processed >=\'{0}\' '.format(self.batch_filter_date_from)
+        if self.batch_filter_date_to:
+            batch_filters_clause += 'AND last_datetime_processed <=\'{0}\' '.format(self.batch_filter_date_to)
+
+        if (batch_filters_clause and len(batch_filters_clause) > 0):
+            # NOTE: to the batch_cursor_clause_filter_only, set as ONLY the batch_filters_clause
+            self.batch_cursor_clause_filter_only = batch_filters_clause
+            # NOTE: to the clause_all, add (to the batchname clause) the batch_filters_clause
+            self.batch_cursor_clause_all += batch_filters_clause
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.open_batch_cursor(): AGAIN Opening SQL cursor on MANIFEST table \'{1}\' for BATCH_NAME=\'{2}\' w/ a BATCH-FILTERED batch_cursor_clause=\"{3}\"...'.format(
+                                    CLASS_PRINTNAME,
+                                    manifest_table,
+                                    batch_name,
+                                    self.batch_cursor_clause_all),
+                                    flush=True)
+
+            # NOTE: first doing a COUNT of how many might match this batch:
+            # NOTE: leave self.batch_cursor_clause_all as UNQUOTED, since it could be NULL or a quoted string:
+            batch_cursor_count_sql_select='SELECT COUNT(DISTINCT(accession_num)) as num_accs_in_batch '\
+                                            'FROM {0} WHERE '\
+                                            'active {1} ;'.format(
+                                            manifest_table,
+                                            self.batch_cursor_clause_all)
+            if self.LOCUTUS_VERBOSE:
+                print('{0}-- # DB=Locutus, Table={1}'.format(self.SQL_OUT_PREFIX, manifest_table), flush=True)
+                print('{0}-- # {1}'.format(self.SQL_OUT_PREFIX, batch_cursor_count_sql_select), flush=True)
+
+            ###################
+            # DO IT! Go ahead and actually execute that batch_cursor_sql_select to open up the batch_cursor:
+            temp_batch_count_cursor =  LocutusDBconnSession.execute(batch_cursor_count_sql_select)
+            # AND ONLY FOR TESTING:
+            temp_batch_count_cursor_result = temp_batch_count_cursor.fetchone()
+            if self.LOCUTUS_VERBOSE:
+                print('{0}-- # {1}'.format(self.SQL_OUT_PREFIX, temp_batch_count_cursor_result), flush=True)
+            self.batch_cursor_MAX_counter = temp_batch_count_cursor_result['num_accs_in_batch']
+            #LEAVE UNTOUCHED not that filtered: self.batch_cursor_MAX_counter_unfiltered = self.batch_cursor_MAX_counter
+
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.open_batch_cursor() FOUND *filtered* batch_name={1} to have {2} DISTINCT(accession_num).'.format(
+                        CLASS_PRINTNAME,
+                        batch_name,
+                        self.batch_cursor_MAX_counter), flush=True)
+
+        if self.LOCUTUS_VERBOSE:
+            print('r3m0 DEBUG: w/ POST-batch_filter_counter_from/to={0}/{1}'.format(self.batch_filter_counter_from, self.batch_filter_counter_to), flush=True)
+
+        if self.batch_cursor_MAX_counter < 1:
+            # if < 1 batch match in this workspace, then...
+            #   OTHERWISE, may want to list ALL DISINCT(batch_name) in this current workspace as a reference,
+            #   THEN close off this cursor (perhaps setting self.batch_cursor=NULL and self.batch_cursor_counter=-1 ???)
+            #
+            # NOT JUST VERBOSE: if self.LOCUTUS_VERBOSE:
+            print('{0}.open_batch_cursor(): WARNING: no accessions found for this batch_name=\'{1}\'.... has it been Preloaded into this workspace?'.format(
+                        CLASS_PRINTNAME,
+                        batch_name), flush=True)
+            print('{0}.open_batch_cursor(): NOTE: available active batches already within this workspace MANIFEST table ({1}) include:'.format(
+                        CLASS_PRINTNAME,
+                        manifest_table), flush=True)
+
+            batch_cursor_distincts_sql_select='SELECT DISTINCT(batch_name), COUNT(*) '\
+                                            'FROM {0} WHERE '\
+                                            'active '\
+                                            'GROUP BY batch_name '\
+                                            'ORDER BY batch_name ;'.format(
+                                            manifest_table)
+            # NOT: if self.LOCUTUS_VERBOSE:
+            # NOTE: allow available batches to be shown when no accessions found for a batch, regardless of verbosity:
+            print('{0}-- # DB=Locutus, Table={1}'.format(self.SQL_OUT_PREFIX, manifest_table), flush=True)
+            print('{0}-- # {1}'.format(self.SQL_OUT_PREFIX, batch_cursor_distincts_sql_select), flush=True)
+
+            ###################
+            # DO IT! Go ahead and actually execute that batch_cursor_sql_select to open up the batch_cursor:
+            temp_active_batches_cursor =  LocutusDBconnSession.execute(batch_cursor_distincts_sql_select)
+            # AND ONLY FOR TESTING:
+            #NOT: if self.LOCUTUS_VERBOSE:
+            # NOTE: allow available batches to be shown when no accessions found for a batch, regardless of verbosity:
+            for temp_active_batches_result in temp_active_batches_cursor.fetchall():
+                print('{0}-- # {1}'.format(self.SQL_OUT_PREFIX, temp_active_batches_result), flush=True)
+            ####################
+
+            # NOTE: but leave the batch cursor state as:
+            # RESET our batch cursor state:
+            #self.batch_cursor = None
+            #self.batch_cursor_MAX_counter = -1
+            #self.batch_cursor_counter = 0
+
+        else:
+            # if >= 1 batch match, then NOTE such a successful opening of the cursor, and carry on....
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.open_batch_cursor(): FOUND batch_cursor_MAX_counter={1} accessions for batch_name=\'{2}\' in this workspace MANIFEST table ({3}).'.format(
+                        CLASS_PRINTNAME,
+                        self.batch_cursor_MAX_counter,
+                        batch_name,
+                        manifest_table), flush=True)
+            #
+            if self.input_manifest_type == MANIFEST_TYPE_DEFAULT_SIMPLIFIED:
+                # SETUP OnPrem subject & object attributes to pass in:
+                select_cols = 'accession_num'
+            elif self.input_manifest_type == ONPREM_MANIFEST_TYPE:
+                # AS inspired FROM Process() within while not manifest_done loop:
+                # SETUP OnPrem subject & object attributes to pass in:
+                # leave the last field blank for the ONPREM_MANIFEST_HEADER_MANIFEST_VER column:
+                # BATCHES NOTE: OOPS, NOTE: no ',{5}'\ since no DEID_QC_STATUS in MANIFEST
+                # BATCHES NOTE: putting it back in (along with a False version of ONPREM_BATCH_VIA_DB_HEADER_DEID_QC_STATUS)
+                # to better align with the expected input manifest format:
+                select_cols = '{0},{1},{2},{3},{4},{5}'\
+                                        .format(ONPREM_BATCH_VIA_DB_HEADER_SUBJECT_ID,
+                                                ONPREM_BATCH_VIA_DB_HEADER_OBJECT_INFO_01,
+                                                ONPREM_BATCH_VIA_DB_HEADER_OBJECT_INFO_02,
+                                                ONPREM_BATCH_VIA_DB_HEADER_OBJECT_INFO_03,
+                                                ONPREM_BATCH_VIA_DB_HEADER_ACCESSION_NUM,
+                                                ONPREM_BATCH_VIA_DB_HEADER_DEID_QC_STATUS)
+
+            # AS A FIRST PASS, though, maybe just: subject_id
+            # OR, at the least, maybe just: subject_id + object_info / object_info_01?
+            # NOTE: leave self.batch_cursor_clause_all as UNQUOTED, since it could be NULL or a quoted string:
+            batch_cursor_sql_select='SELECT {0} '\
+                                            'FROM {1} WHERE '\
+                                            'active {2} '\
+                                            'ORDER BY subject_id, accession_num ;'.format(
+                                            select_cols,
+                                            manifest_table,
+                                            self.batch_cursor_clause_all)
+            if self.LOCUTUS_VERBOSE:
+                print('{0}-- # DB=Locutus, Table={1}'.format(self.SQL_OUT_PREFIX, manifest_table), flush=True)
+                print('{0}-- # {1}'.format(self.SQL_OUT_PREFIX, batch_cursor_sql_select), flush=True)
+
+            self.batch_cursor_counter = 0
+            ###################
+            # DO IT! Go ahead and actually execute that batch_cursor_sql_select to open up the batch_cursor:
+            self.batch_cursor =  LocutusDBconnSession.execute(batch_cursor_sql_select)
+            # AND ONLY FOR TESTING:
+            # =====> TODO: disable this and/or allow it to be returned from: get_next_acc_via_batch_cursor()
+            #####
+            #for sql_select_result in self.batch_cursor.fetchall():
+            #    print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, sql_select_result), flush=True)
+            #####
+            # with the above already looped, go ahead and RESET it back up at the beginning:
+            self.batch_cursor =  LocutusDBconnSession.execute(batch_cursor_sql_select)
+            ####################
+            # TODO: eventually add filtering to open_batch_cursor(), but first pass is for the entire batch:
+            # WAS:
+            # self.batch_cursor = "Pseudo-Cursor"
+            # self.batch_cursor_counter = 0
+
+            # end o' open_batch_cursor()
+
+
+    def close_batch_cursor(self):
+        # TODO: anything else to implement here for it?
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.close_batch_cursor() closing BATCH cursor.'.format(
+                    CLASS_PRINTNAME), flush=True)
+        # RESET our batch cursor state:
+        self.batch_cursor = None
+        self.batch_cursor_MAX_counter = -1
+        self.batch_cursor_counter = 0
+        # TODO: also close of the session? Or no, just the batch cursor?
+
+
+    def get_next_acc_via_batch_cursor(self):
+        # NOTE:MANIFEST_READER=part0b-ALT:
+        # Q: does batch_cursor even need to be returned by open_batch_cursor() and passed in as a parm here?
+        # NOTING that these methods are directly accessing self.batch_cursor_counter = 0
+        #   trying by setting this here and in get_next_batch_cursor():
+
+        # SAFETY MEASURE:
+        # BATCHES NOTE: now includes check with self.batch_filter_counter_to:
+        # WAS WITH: or (self.batch_filter_counter_to and self.batch_cursor_counter > self.atoi(self.batch_filter_counter_to)):
+        if (not self.batch_cursor) \
+        or (self.batch_cursor_counter > self.batch_cursor_MAX_counter) \
+        or (self.batch_filter_counter_to and self.batch_cursor_counter > atoi(self.batch_filter_counter_to)):
+            raise StopIteration
+
+        self.batch_cursor_counter += 1
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.get_next_acc_via_batch_cursor(): Getting NEXT accession via SQL cursor, cursor_counter={1} '\
+                    'of batch_cursor_MAX_counter={2}...'.format(
+                            CLASS_PRINTNAME,
+                            self.batch_cursor_counter,
+                            self.batch_cursor_MAX_counter),
+                            flush=True)
+        # TODO: open up an iterator, but no need to do anything with it... YET.
+        # BATCHES NOTE: for manifest-once Batch query in the Workspace via SQL.
+        # TODO: eventually add filtering to open_batch_cursor(), but first pass is for the entire batch:
+        # TODO, and as a first incremental step towards it, just return something bogus:
+        #return 'number_{0}_bogus'.format(self.batch_cursor_counter)
+
+        result_row = self.batch_cursor.fetchone()
+
+        # BATCHES NOTE: now includes check with self.batch_filter_counter_from:
+        if self.batch_filter_counter_from:
+            while (self.batch_cursor_counter < atoi(self.batch_filter_counter_from)):
+                if self.LOCUTUS_VERBOSE:
+                    print('{0}.get_next_acc_via_batch_cursor() IGNORING cursor_counter={1} of batch_cursor_MAX_counter={2} row '\
+                        'UNTIL within range of {3}:{4}; IGNORING row == {5}'.format(
+                        CLASS_PRINTNAME,
+                        self.batch_cursor_counter,
+                        self.batch_cursor_MAX_counter,
+                        self.batch_filter_counter_from,
+                        self.batch_filter_counter_to,
+                        result_row), flush=True)
+                self.batch_cursor_counter += 1
+                result_row = self.batch_cursor.fetchone()
+
+        #WAS WITH: or (self.batch_cursor_counter < self.atoi(self.batch_filter_counter_to)):
+        if not self.batch_filter_counter_to \
+        or (self.batch_cursor_counter <= atoi(self.batch_filter_counter_to)):
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.get_next_acc_via_batch_cursor() FOUND cursor_counter={1} of batch_cursor_MAX_counter={2} row '\
+                    'as WITHIN range of {3}:{4}; about to look at row == {5}'.format(
+                        CLASS_PRINTNAME,
+                        self.batch_cursor_counter,
+                        self.batch_cursor_MAX_counter,
+                        self.batch_filter_counter_from,
+                        self.batch_filter_counter_to,
+                        result_row), flush=True)
+        else:
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.get_next_acc_via_batch_cursor() IGNORING cursor_counter={1} of batch_cursor_MAX_counter={2} row '\
+                    'since NOW OUT OF RANGE {3}:{4}; IGNORING row == {5}, and raising StopIteration'.format(
+                        CLASS_PRINTNAME,
+                        self.batch_cursor_counter,
+                        self.batch_cursor_MAX_counter,
+                        self.batch_filter_counter_from,
+                        self.batch_filter_counter_to,
+                        result_row), flush=True)
+            raise StopIteration
+
+        # and for our default catch all of no batch_filter_counter, but a standard end of cursor:
+        if not result_row or not result_row[0]:
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.get_next_acc_via_batch_cursor() found END of input at cursor_counter={1} of batch_cursor_MAX_counter={2}; '\
+                    'raising StopIteration'.format(
+                            CLASS_PRINTNAME,
+                            self.batch_cursor_counter,
+                            self.batch_cursor_MAX_counter),
+                            flush=True)
+            raise StopIteration
+
+        return result_row
+        # end o' get_next_acc_via_batch_cursor()
+
+
+    def open_manifest_CSV(self, module, manifest_CSV):
+        # NOTE: new MANIFEST_READER=part0b-ALT:
+        # UPDATES: settings.manifest_infile, settings.manifest_reader, settings.manifest_counter
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.open_manifest_CSV(): Opening input manifest CSV \'{1}\'...'.format(
+                                CLASS_PRINTNAME,
+                                manifest_CSV),
+                                flush=True)
+
+        self.manifest_infile = open(manifest_CSV, 'r')
+        self.manifest_reader = csv.reader(self.manifest_infile, delimiter=',')
+        self.manifest_counter = 0
+
+        # NOTE: first pass attempt to update...
+        # BUT, do we need to read the first row to determine the header?
+        # we MAY need to do so, especially when RESOLVE_MULTIUUIDS header versions might be possible!
+        #########
+        # AND, even though typically for CSV manifests, reuse the following, as via Setup():
+        self.input_manifest_type = MANIFEST_TYPE_DEFAULT_SIMPLIFIED
+        self.input_manifest_source_column = 0
+        self.input_manifest_version = MANIFEST_TYPE_DEFAULT_SIMPLIFIED
+        self.manifest_header_ver = ''
+        if (module.upper() == DICOM_MODULE_ONPREM):
+            self.input_manifest_type = ONPREM_MANIFEST_TYPE
+            self.input_manifest_source_column = ONPREM_MANIFEST_SOURCE_COLUMN_OFFSET
+            self.input_manifest_version = ONPREM_MANIFEST_HEADER_MANIFEST_VER
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.open_manifest_CSV() found OnPrem module=\'{1}\' GIVES input_manifest_type=ONPREM_MANIFEST_TYPE=\'{2}\', '\
+                    'w/ input_manifest_version=ONPREM_MANIFEST_HEADER_MANIFEST_VER=\'{3}\'.'.format(
+                        CLASS_PRINTNAME,
+                        module,
+                        self.input_manifest_type,
+                        self.input_manifest_version), flush=True)
+        # source_column for ACCESSION_NUM to follow SUBJECT & OBJECT, so column=2:
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.open_manifest_CSV() called for module=\'{1}\', now has self.input_manifest_type=\'{2}\'.'.format(
+                        CLASS_PRINTNAME,
+                        module,
+                        self.input_manifest_type), flush=True)
+
+
+    def close_manifest_CSV(self):
+        # TODO: anything to implement here for it?
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.close_manifest_CSV() closing manifest CSV.'.format(
+                    CLASS_PRINTNAME), flush=True)
+        self.manifest_infile.close()
+
+
+    def get_next_nontrivial_row_via_manifest_CSV(self):
+        # to loop across any blank or #-comment-leading lines until either a header or accession row is found, to return it.
+        # MAY throw exceptions such as: StopIteration, to be caught by the caller.
+        # NOTE: new MANIFEST_READER=part1a-ALT & part2a-ALT & part3a-ALT: # WAS: MANIFEST_READER=part1a:
+        # EMITS: MANIFEST_OUTPUT if MANIFEST_OUTPUT_INCLUDE_COMMENT_LINES
+        # EXPECTS: MANIFEST_OUTPUT_PREFIX
+
+        #print('r3m0 DEBUG: Welcome to get_next_nontrivial_row_via_manifest_CSV()', flush=True)
+
+        curr_csv_row = next(self.manifest_reader)
+
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.get_next_nontrivial_row_via_manifest_CSV() read row {1}'.format(
+                    CLASS_PRINTNAME,
+                    curr_csv_row), flush=True)
+
+        while len(curr_csv_row) == 0 or \
+                (not any(field.strip() for field in curr_csv_row)) or \
+                curr_csv_row[0] == '' or \
+                curr_csv_row[0][0] == '#':
+            # read across any blank manifest lines (or lines with only blank fields, OR lines starting with a comment, '#'):
+            if self.LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS:
+                if self.LOCUTUS_VERBOSE:
+                    print('{0}.get_next_nontrivial_row_via_manifest_CSV(): ignoring input manifest comment line of "{1}"'.format(
+                            CLASS_PRINTNAME,
+                            curr_csv_row), flush=True)
+                if MANIFEST_OUTPUT_INCLUDE_COMMENT_LINES:
+                    # NOTE: quick stdout log crumb to easily create an output CSV via: grep MANIFEST_OUTPUT
+                    # (eventually TODO: use an actual CSV writer to stdout, but for now, a quick hard-code)
+                    # NOTE: emit such an INPUT COMMENT LINES even if non-VERBOSE:
+                    print('{0},{1}'.format(
+                            MANIFEST_OUTPUT_PREFIX,
+                            ','.join(curr_csv_row)),
+                            flush=True)
+                    # NOTE: to be printed out by the calling method, if NOT an INPUT COMMENT LINE.
+
+            # NOTE:MANIFEST_READER=part1b-ALT & part2b-ALT & part3b-ALT:
+            curr_csv_row = next(self.manifest_reader)
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.get_next_nontrivial_row_via_manifest_CSV() read NEXT row {1}'.format(
+                        CLASS_PRINTNAME,
+                        curr_csv_row), flush=True)
+
+        # print('r3m0 DEBUG: Goodbye from get_next_nontrivial_row_via_manifest_CSV()', flush=True)
+        self.manifest_counter += 1
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.get_next_nontrivial_row_via_manifest_CSV() found manifest_counter={1} row: {0}'.format(
+                        CLASS_PRINTNAME,
+                        self.manifest_counter,
+                        curr_csv_row), flush=True)
+
+        return curr_csv_row
+        # end o' get_next_nontrivial_row_via_manifest_CSV()
+
+
+    # Settings' version of create_db_tables for LOCUTUS_SYS_STATUS_TABLE & LOCUTUS_ALL_BATCHES_TABLE
+    def create_db_tables(self, DBconnSession):
+        # WIP: opening up for the Preloader to reuse.
+        # NOTE: being in Settings, each of the typical self.locutus_settings.* checks are now self.* checks :-)
+
+        if self.LOCUTUS_VERBOSE:
+            print("r3m0 DEBUG: ====> HOWDY from Settings::create_db_tables()")
+        ##########
+        #print("Settings::create_db_tables():  DEBUG traceback MAY look like the following:", flush=True)
+        #traceback.print_stack()
+        ##########
+        # NOTE: found that this is called 3x times for each call to Settings.get_Locutus_system_status()
+        # TODO: consider only carrying on if not already called in this session;
+        # lest we end up checking this between every accession w/in a De-ID module!
+        if self.ran_settings_create_db_tables:
+            print('{0}.create_db_tables(): already invoked for Settings; returning early'.format(
+                        CLASS_PRINTNAME),
+                        flush=True)
+            return
+        # else, first time call to this.... carry on
+        # NOTE: update ran_settings_create_db_tables at the end
+
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.create_db_tables(): Setting up Locutus-local tables for Settings in {1} ...'.format(
+                        CLASS_PRINTNAME,
+                        self.locutus_target_db_name),
+                        flush=True)
+
+        if self.LOCUTUS_DB_DROP_TABLES \
+            and not self.LOCUTUS_TEST:
+            # NOTE: only drop the LOCUTUS tables which are directly applicable to Settings:
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.create_db_tables(): DROPPING existing Locutus-local Settings '\
+                        'tables since config LOCUTUS_DB_DROP_TABLES == {1}'.format(
+                        CLASS_PRINTNAME,
+                        self.LOCUTUS_DB_DROP_TABLES),
+                        flush=True)
+            DBconnSession.execute('DROP TABLE if exists {0};'.format(self.LOCUTUS_SYS_STATUS_TABLE))
+            DBconnSession.execute('DROP TABLE if exists {0};'.format(self.LOCUTUS_ALL_BATCHES_TABLE))
+        else:
+            if self.LOCUTUS_VERBOSE:
+                print('{0}.create_db_tables(): NOT dropping existing tables since config '\
+                        'LOCUTUS_DB_DROP_TABLES == {1} and '\
+                        'LOCUTUS_TEST == {2}'.format(
+                        CLASS_PRINTNAME,
+                        self.LOCUTUS_DB_DROP_TABLES,
+                        self.LOCUTUS_TEST),
+                        flush=True)
+
+        # LOCUTUS_SYS_STATUS_TABLE:
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.create_db_tables(): About to CREATE TABLE LOCUTUS_SYS_STATUS_TABLE: {1}'.format(
+                CLASS_PRINTNAME,
+                self.LOCUTUS_SYS_STATUS_TABLE),
+                flush=True)
+        if not self.LOCUTUS_TEST:
+            DBconnSession.execute('CREATE TABLE if not exists {0} ('\
+                                    'status_type text, '\
+                                    'status_node text, '\
+                                    'status_desc text, '\
+                                    'date_updated date, '\
+                                    'active boolean '\
+                                    ');'.format(self.LOCUTUS_SYS_STATUS_TABLE))
+        # TODO: consider how/where LOCUTUS_SYS_STATUS_TABLE shall be automatically populated, if at all?
+        # NOTE: from its manual creation, it has initally merely been manually built up.... so far.
+
+        # LOCUTUS_ALL_BATCHES_TABLE:
+        if self.LOCUTUS_VERBOSE:
+            print('{0}.create_db_tables(): About to CREATE TABLE LOCUTUS_ALL_BATCHES_TABLE: {1}'.format(
+                CLASS_PRINTNAME,
+                self.LOCUTUS_ALL_BATCHES_TABLE),
+                flush=True)
+        if not self.LOCUTUS_TEST:
+            DBconnSession.execute('CREATE TABLE if not exists {0} ('\
+                                    'accession_num text, '\
+                                    'module text, '\
+                                    'workspace text, '\
+                                    'batch_name text, '\
+                                    'subject_id text, '\
+                                    'manifest_status text, '\
+                                    'last_datetime_processed timestamp without time zone, '\
+                                    'active boolean '\
+                                    ');'.format(self.LOCUTUS_ALL_BATCHES_TABLE))
+
+        # and now, can flag that this has already been called:
+        self.ran_settings_create_db_tables = True
+        # end o' create_db_tables()
+
+
+    # NOTE: moved atoi() and itoa() up to class method outside of the instance methods:
 
 
     # set_Locutus_system_status():
@@ -943,10 +2016,10 @@ class Settings:
     # UPDATE: added module-specific values as well, to allow setting any one at a time
     # if supplied, parmDBconnSession will reuse existing DB connections such as: LocutusDBconnSession
     # otherwise, if no parmDBconnSession, but parmDBconnectionString is supplied, a temporary DB connection will be opened and closed
-    def set_Locutus_system_status(settings, new_sys_stat_val=False, use_Docker_node=False, node_name=None, use_module=False, module_name=None, db_updates_enabled=False, parmDBconnSession=None, parmDBconnectionString=None):
+    def set_Locutus_system_status(self, new_sys_stat_val=False, use_Docker_node=False, node_name=None, use_module=False, module_name=None, db_updates_enabled=False, parmDBconnSession=None, parmDBconnectionString=None):
         # NOTE: the sys_status_set returned by here does not indicate the value set,
         # only whether or not this provided value WAS set (use get_Locutus_system_status() thereafter to confirm its set value)
-        sys_table = settings.LOCUTUS_SYS_STATUS_TABLE
+        sys_table = self.LOCUTUS_SYS_STATUS_TABLE
         sys_status_set=False
         status_msg='StubbyScrubbyDubDubby'
 
@@ -964,6 +2037,11 @@ class Settings:
             # TODO: update the following to include module as well.... WAS: return (sys_status_set, status_msg)
             return (sys_status_set, status_msg, node_name)
 
+        # NOTE: pre-run the create_db_tables in case not yet existent():
+        if not self.ran_settings_create_db_tables:
+            self.create_db_tables(SysDBconnSession)
+            self.ran_settings_create_db_tables = True
+
         ##############
         # Q: only allow updates of system_status for nodes which already have defined settings?
         # Nahhhhh, allow this to create new such rows?  even if Jenkins might not fully be able to utilize directly,
@@ -979,9 +2057,9 @@ class Settings:
         # and a default insert_cols, for a populated insert_vals to follow
         insert_or_update_sql=''
         insert_cols='{0}, {1}, {2}, {3}, {4}'.format(
-            settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL,
-            settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_COL, settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_DATETIME_COL,
-            settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_ACTIVE_COL)
+            self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, self.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL,
+            self.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_COL, self.LOCUTUS_SYS_STATUS_TABLE_STATUS_DATETIME_COL,
+            self.LOCUTUS_SYS_STATUS_TABLE_STATUS_ACTIVE_COL)
         insert_vals=''
 
         if use_Docker_node and use_module:
@@ -1000,37 +2078,37 @@ class Settings:
             # At least with the capability of setting one at a time, though, we're good, so no hurries.
 
         if (not use_Docker_node) and (not use_module):
-            node_name = settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_VAL_OVERALL
+            node_name = self.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_VAL_OVERALL
             sys_stat_where_clause='{0}=\'{1}\' AND {2}=\'{3}\''.format(
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_OVERALL,
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL, node_name)
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_OVERALL,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL, node_name)
             # build up parts for an "INSERT INTO sys_table (<insert_cols>) VALUES (insert_vals)"
             insert_vals='\'{0}\', \'{1}\', \'{2}\', now(), {3}'.format(
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_OVERALL,
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_VAL_OVERALL,
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_PREFIX,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_OVERALL,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_VAL_OVERALL,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_PREFIX,
                 new_sys_stat_val)
         elif use_Docker_node:
             # use_Docker_node==True
             sys_stat_where_clause='{0}=\'{1}\' AND {2}=\'{3}\''.format(
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PERNODE,
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL, node_name)
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PERNODE,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL, node_name)
             # build up parts for an "INSERT INTO sys_table (<insert_cols>) VALUES (insert_vals)"
             insert_vals='\'{0}\', \'{1}\', \'{2}\', now(), {3}'.format(
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PERNODE,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PERNODE,
                 node_name,
-                '{0} for node {1}'.format(settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_PREFIX, node_name),
+                '{0} for node {1}'.format(self.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_PREFIX, node_name),
                 new_sys_stat_val)
         elif use_module:
             # use_module==True
             sys_stat_where_clause='{0}=\'{1}\' AND {2}=\'{3}\''.format(
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PER_MODULE,
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL, module_name)
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_COL, self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PER_MODULE,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_NODE_COL, module_name)
             # build up parts for an "INSERT INTO sys_table (<insert_cols>) VALUES (insert_vals)"
             insert_vals='\'{0}\', \'{1}\',\'{2}\', now(), {3}'.format(
-                settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PER_MODULE,
+                self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PER_MODULE,
                 module_name,
-                '{0} for module {1}'.format(settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_PREFIX, module_name),
+                '{0} for module {1}'.format(self.LOCUTUS_SYS_STATUS_TABLE_STATUS_DESC_PREFIX, module_name),
                 new_sys_stat_val)
 
         # NOTE: count for the expected number of records, whether for overall, or pernode
@@ -1099,20 +2177,20 @@ class Settings:
                             '{3}=now() '\
                             'WHERE {4} ;'.format(
                             sys_table,
-                            settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_ACTIVE_COL, new_sys_stat_val,
-                            settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_DATETIME_COL,
+                            self.LOCUTUS_SYS_STATUS_TABLE_STATUS_ACTIVE_COL, new_sys_stat_val,
+                            self.LOCUTUS_SYS_STATUS_TABLE_STATUS_DATETIME_COL,
                             sys_stat_where_clause)
                 ##############################
                 sys_status_set=True
 
         if insert_or_update_sql and len(insert_or_update_sql):
-            print(settings.SQL_OUT_PREFIX, insert_or_update_sql, flush=True)
+            print(self.SQL_OUT_PREFIX, insert_or_update_sql, flush=True)
             SysDBconnSession.execute(insert_or_update_sql)
             status_msg='status set to {0}.'.format(new_sys_stat_val)
 
 
         if not parmDBconnSession and parmDBconnectionString:
-            # NOTE: no DBconnSession passed in (e.g., via GCP using its own)
+            # NOTE: no DBconnSession passed in (e.g., using its own)
             # but parmDBconnectionString was passed in to create a temporary SysDBconnSession.
             # So.....
             SysDBconnSession.close()
@@ -1121,15 +2199,13 @@ class Settings:
         # end of set_Locutus_system_status()
 
 
-# TODO: be sure to update ALL calls to get_Locutus_system_status from main_locutus and module_gcp,
-# NOTING to swap the order of alt_Docker_node_name to after the check_Docker_name!
     # get_Locutus_system_status():
     # determine the current DB-based Locutus system status, incoporating both overall and node-specific values.
     # UPDATE: added module-specific values as well, to allow getting any one at a time, or even a cascade of all
     # if supplied, parmDBconnSession will reuse existing DB connections such as: LocutusDBconnSession
     # otherwise, if no parmDBconnSession, but parmDBconnectionString is supplied, a temporary DB connection will be opened and closed
-    def get_Locutus_system_status(settings, check_Docker_node=True, alt_Docker_node_name=None, check_module=False, alt_module_name=None, parmDBconnSession=None, parmDBconnectionString=None):
-        sys_table = settings.LOCUTUS_SYS_STATUS_TABLE
+    def get_Locutus_system_status(self, check_Docker_node=True, alt_Docker_node_name=None, check_module=False, alt_module_name=None, parmDBconnSession=None, parmDBconnectionString=None):
+        sys_table = self.LOCUTUS_SYS_STATUS_TABLE
         node_name = 'overall'
         module_name = 'overall'
         sys_status=False
@@ -1170,7 +2246,7 @@ class Settings:
             #    check_module, alt_module_name, module_name), flush=True)
 
         # more formally, the full active type
-        curr_status_type = settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PERNODE if check_Docker_node else settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PER_MODULE
+        curr_status_type = self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PERNODE if check_Docker_node else self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_PER_MODULE
         # less formally for messages, an abbreviated active type
         curr_short_type = "mode" if check_Docker_node else "module" if check_module else "overall"
         # and the subtype, i.e., the specific node or module being checked:
@@ -1194,21 +2270,37 @@ class Settings:
                     False, sys_table, check_Docker_node, alt_Docker_node_name, check_module, alt_module_name, parmDBconnSession, parmDBconnectionString)
             return (sys_status, status_msg, node_name)
 
+        # NOTE: pre-run the create_db_tables in case not yet existent():
+        if not self.ran_settings_create_db_tables:
+            self.create_db_tables(SysDBconnSession)
+            self.ran_settings_create_db_tables = True
+
         status_msg='r3m0:WIP=setting up get_Locutus_system_status(sys_table={0}, DBconnSession={1} & check_Docker_node={2}, node_name={3}, & check_module={4}, module_name={5})'.format(
                     sys_table, parmDBconnSession, check_Docker_node, node_name, check_module, alt_module_name)
         #print('r3m0 DEBUG: MID01 from get_Locutus_system_status(), status_msg={0}'.format(status_msg), flush=True)
 
         # TODO: wrap a try/catch around the following SysDBconnSession?
-        overall_sys_stat_result = SysDBconnSession.execute('SELECT active '\
+        curr_overall_sys_status = False
+        overall_sys_stat_count_result = SysDBconnSession.execute('SELECT COUNT(active) as num_sys_wide '\
                                                         'FROM {0} WHERE status_type=\'{1}\'  '\
-                                                        'AND status_node=\'system-wide\';'.format(sys_table, settings.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_OVERALL))
-        overall_sys_stat_row = overall_sys_stat_result.fetchone()
-        curr_overall_sys_status = overall_sys_stat_row['active']
+                                                        'AND status_node=\'system-wide\';'.format(sys_table, self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_OVERALL))
+        overall_sys_stat_count_row = overall_sys_stat_count_result.fetchone()
+        curr_overall_sys_status_count = overall_sys_stat_count_row['num_sys_wide']
 
-        if not curr_overall_sys_status:
-            status_msg='sys_table={0} shows Locutus overall status as {1}'.format(sys_table, curr_overall_sys_status)
-            #print('r3m0 DEBUG: MID02a from get_Locutus_system_status(), status_msg={0}'.format(status_msg), flush=True)
-        elif check_Docker_node or check_module:
+        if curr_overall_sys_status_count != 1:
+            status_msg='ERROR: OTHER than 1x SYS STAT record found for status_node=\`system-wide\`, count()=={0}'.format(
+                    curr_overall_sys_status_count)
+        else:
+            overall_sys_stat_result = SysDBconnSession.execute('SELECT active '\
+                                                            'FROM {0} WHERE status_type=\'{1}\'  '\
+                                                            'AND status_node=\'system-wide\';'.format(sys_table, self.LOCUTUS_SYS_STATUS_TABLE_STATUS_TYPE_VAL_OVERALL))
+            overall_sys_stat_row = overall_sys_stat_result.fetchone()
+            curr_overall_sys_status = overall_sys_stat_row['active']
+            if not curr_overall_sys_status:
+                status_msg='sys_table={0} shows Locutus overall status as {1}'.format(sys_table, curr_overall_sys_status)
+                #print('r3m0 DEBUG: MID02a from get_Locutus_system_status(), status_msg={0}'.format(status_msg), flush=True)
+
+        if check_Docker_node or check_module:
             #print('r3m0 DEBUG: MID02b from get_Locutus_system_status() for check node OR module...', flush=True)
             curr_nodemodule_sys_status = False
             ####################
@@ -1296,7 +2388,7 @@ class Settings:
             sys_status=curr_overall_sys_status
 
         if not parmDBconnSession and parmDBconnectionString:
-            # NOTE: no DBconnSession passed in (e.g., via GCP using its own)
+            # NOTE: no DBconnSession passed in (e.g., using its own)
             # but parmDBconnectionString was passed in to create a temporary SysDBconnSession.
             # So.....
             SysDBconnSession.close()

@@ -4,7 +4,7 @@
 
 <IMG SRC="./docs/images/Locutus_logo.png" WIDTH="400" HEIGHT="100" />
 
-_last update: 21 January 2026_
+_last update: 29 June 2026_
 
 
 The CHOP/UPenn Brain-Gene Development Lab ([BGD](https://www.bgdlab.org)), in partnership with CHOP's Translational Research Informatics Group ([TRiG](https://www.research.chop.edu/dbhi-translational-informatics)), is proud to present to you Locutus, our de-identification workflow framework. 
@@ -117,10 +117,12 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
 * [High-Level Approach & Flow](#high_level_approach_and_flow)
     * [Historical Change-Driven Approach](#historical_change_driven_approach)
     * [Current Manifest-Driven Approach](#current_manifest_driven_approach)
+    * [📣 New in 2026: Manifest-Once Batches Approach 🎉](#2026_manifest-once_batches_approach)
     * [General Locutus Approach](#general_locutus_approach)
     * [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
         * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
-        * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
+            * [📣 New in 2026: Samba support added to **OnPrem De-ID** module for Jenkins deployment](#highlevel_onprem_dicoms_samba)
+		* [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
 			* [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader)
 			* [**DICOM Multi-UUID Resolver** Summarizer sidecar](#highlevel_dicom_multiuuid_resolver)
 		* [**Locutus System Status** command](#highlevel_locutus_system_status)
@@ -138,6 +140,8 @@ The following sections from the Children's Hospital of Philadelphia Research Ins
 	* [**Locutus System Status** command configuration](#cfg_system_status)
 * [Deployment](#deployment)
     * [Local Deployment](#deployment_local)
+		* [The Locutus Conductor](#deployment_local_conductor)
+		* [📣 New in 2026: Conductor support of Manifest-Once Batches 🎉](#deployment_local_conductor_2026batches)
     * [Jenkins-based Deployment](#deployment_jenkins)
         * [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 * [3rd Party Module Dependencies (in-house or not)](#3rd_party)
@@ -170,9 +174,11 @@ where applicable, as follows:
 
 * [Historical Change-Driven Approach](#historical_change_driven_approach)
 * [Current Manifest-Driven Approach](#current_manifest_driven_approach)
+* [📣 New in 2026: Manifest-Once Batches Approach 🎉](#2026_manifest-once_batches_approach)
 * [General Locutus Approach](#general_locutus_approach)
 * [Approach Summarized for each Locutus module](#approach_summarized_for_each_locutus_module)
     * [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms)
+	    * [📣 New in 2026: Samba support added to **OnPrem De-ID** module for Jenkins deployment](#highlevel_onprem_dicoms_samba)
     * [**DICOM Summarizer** command](#highlevel_dicom_summarizer)
 		* [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader)
 		* [**DICOM Multi-UUID Resolver** Summarizer sidecar](#highlevel_dicom_multiuuid_resolver)
@@ -255,6 +261,58 @@ are nearly limitless.
 See [Future Considerations to Approach](#highlevel_future)
 and [Deploying both Change- and Manifest- driven via Jenkins](#deployment_jenkins_hybrid_driven)
 for further info.
+
+
+----------------------------------------------------------------
+
+<A NAME="2026_manifest-once_batches_approach"></A>
+
+### 📣 New in 2026: Manifest-Once Batches Approach 🎉
+
+Expanding upon the above [Current Manifest-Driven Approach](#current_manifest_driven_approach),
+2026 introduced the long awaited game-changer of Manifest-Once Batches.  With an initial Preload of the batch from a one-time manifest input, all subsequent deployments of the Summarizer, De-ID, and even a re-Preloader are able to bypass further manifests, instead referencing the batch as already loaded into the DB's current workspace. (*)
+
+New Manifest-Once Batches configuration settings:
+* `locutus_load_batch_from_DB_bypass_CSV_manifest`
+* `locutus_batch_name`: w/ special keyword batch-name of **"*NOOP*"** (**NO-OP**eration) to indicate an accessionless manifest (*); any run of the Summarizer with the above `bypass_CSV: True` for a non-existent batch_name (in the current workspace) shall result in a list of all batch_names in the current workspace (**)
+* `locutus_batch_filter_statuses`: comma-separated exact matches, w/ special keywords of:
+        * `ERROR_WILDCARD` (manifest_status LIKE 'ERROR_%')
+        * `ZZZ_WILDCARD` (manifest_status LIKE 'ZZZ-ONDECK%')
+        * `PENDING_WILDCARD` (manifest_status LIKE '%PENDING_CHANGE%')
+        * `MULTIUUID_WILDCARD` (manifest_status LIKE '%ERROR_MULTIPLE_CHANGE_UUIDS%')
+* `locutus_batch_filter_accession_nums` comma-separated exact matches, e.g.,: `acc1,acc2,...,accN`
+* `locutus_batch_filter_processed_date_range` colon-separated date range, e.g.,: `2026-01-01:2026-03-31`
+* `locutus_batch_filter_counter_range` colon-separated post-filter counter range, e.g.,: `1:10` to only see the first ten batch-filtered accessions
+
+The first three batch filters above (status, accession, and date_range) are all used to generate the SQL cursor used in iterating through the pre-loaded batch.  While any comma-separated accession or status values (e.g., `s1,s2`) are parenthetically combined through Boolean ORs, e.g., `(STATUS==s1 OR STATUS==s2)`, the different filters are themselves Boolean AND'd together, e.g., `(STATUS==s1 OR STATUS==s2) AND (ACCESSION==a1 OR ACCESSION==a2).
+
+The fourth, and final, batch filter is a limited counter_range that is only applied on the resulting SQL cursor as created with the first three batch filters.
+
+(*) CAVEAT: Jenkins jobs still require a manifest for their first time deployment on any node in order to perform the generally expected volume-mounting to the Docker container, even if it will by bypassed and not utilized by Locutus itself.
+
+(**) PRO TIP: If unsure of the batches currently defined within any Locutus Workspace, but without direct access to check the DB itself, deploy the Summarizer with:
+* `locutus_load_batch_from_DB_bypass_CSV_manifest: True`
+* `dicom_summarize_stats_preload_new_accessions_per_manifest: False` (SAFETY: to ensure no Preloading)
+* `dicom_summarize_stats_enable_db_updates: False` (SAFETY: to ensure that nothing at all writes to the DB)
+* `locutus_batch_name: LIST_BATCHES_PLEASE` (or any other such generally unused batch_name such as "BATCH_MENU_POR_FAVOR")
+
+#### the **Locutus Migrator**, and the **Locutus Preloader Propagator**
+
+The **Locutus Migrator** is an initial part of each **DICOM De-ID** module responsible for migrating into the Locutus DB's respective Locutus Workspace any accessions newly received by the Research PACS, as indexed by its Stager.  Such new accessions will be migrated into the current Workspace's **Locutus STATUS** table for the default NULL-named batch.  See the **[Multi-UUID Resolver SIDEBAR: Locutus Migrator](#highlevel_dicom_multiuuid_resolver_sidebar_migrators)** for more information on the **Locutus Migrator** itself.
+
+To support our new Manifest-Once Batches, the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) has been enhanced with a **Locutus Preloader Propagator** to likewise propagate any freshing migrated NULL-named batch accessions in the Workspace's **Locutus STATUS** table for the currently named batch.
+
+As such, the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) is an important key to ensure that the currently specified Workspace's named batch shall be brought up to date with the latest and greatest accession UUIDs, including a corresponding manifest_status in the current Workspace's **Locutus MANIFEST** table for the named batch.
+
+#### 📣 New in 2026: The global **AAA_LOCUTUS_BATCHES** table
+
+Accessions may now appear in any number of Locutus Workspaces, *and* in any number of batches within each Locutus Workspace. With such an increase to 1:N:M accession:Workspaces:Batches cardinality, the management of individual likewise increases in complexity. The new global **AAA_LOCUTUS_BATCHES** table has been introduced to catalog and more easily manage the various occurrences of each accession within the overall Locutus landscape.
+
+Each time an accession's **Locutus MANIFEST** table is updated in any Locutus Workspace (whether through  the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) or a **DICOM De-ID** module), a corresponding update is now made to this global **AAA_LOCUTUS_BATCHES** table, allowing a one-stop shop to quickly view all workspaces and batches utilzing any given accession.
+
+For example, below is a snapshot of all current-at-the-time occurrences for a particular sample Butterball test (accession `1234AVH`):
+
+<IMG src="./docs/images/AAA_Locutus_Batches_example.png">
 
 
 ----------------------------------------------------------------
@@ -362,6 +420,35 @@ Please notice the following `dicom-anon` flags as used for the above call from t
 
 **PHI WARNING:** Even with using such a de-identification profile to allow DICOM metadata that is generally PHI-free, and excluding DICOM series that are more prone to PHI, such Protected Health Information can still slip through the cracks of DICOM de-identification.  This is especially true when DICOM objects are obtained from other institutions which might adhere to other practices.  For example, we have observed PHI in Series Description values as set by other institutions to include Physician or even Patient names.  The balance between (a) preventing any PHI to pass through de-identification, while (b) allowing enough DICOM metadata through de-identification to support downstream research, is an ever dynamic one, requiring vigilence and collaboration between the Locutus team and researchers.
 
+<A NAME="highlevel_onprem_dicoms_samba"></A>
+
+**📣 New in 2026: Samba support added to OnPrem De-ID module for Jenkins deployment 🎉**
+
+Internal CHOP Research IS infrastructure requires that any isilon file mount be dual-protocol configured, for both NFS (as for VM-based deployments) and SMB (for Jenkins-based deployments) file system protocols.
+
+For VM-based deployments requiring NFS, the `trig_imaging` partition may be configured as follows:
+
+```
+locutus_target_use_isilon:    True
+locutus_target_isilon_path:   /mnt/isilon/trig_imaging/locutus_bgdlab_output/onprem_via_VM/
+# ^^^ NFS-mounted on this VM, as per its /etc/fstab entry:
+# host_nfs:/trig_imaging /mnt/isilon/trig_imaging nfs [...]
+```
+
+For Jenkins-based deployments requiring SMB, the Samba details may be configured as follows:
+
+```
+locutus_target_use_isilon:    True
+locutus_target_isilon_path:   //host_samba/trig_imaging/locutus_bgdlab_output/onprem_via_2026jenkins/
+# ^^^ SMB-mounted for Jenkins, as implied by the //host_samba host clue;
+# vvv Explicitly configured in this Locutus deployment for Samba with:
+locutus_target_isilon_path_is_samba: True
+locutus_target_isilon_path_samba_server: host_samba
+# NOTE: following assuming trig: namespace, trig:/kv1/[etc]
+locutus_target_isilon_path_samba_SA_user_vault_path: kv1/SAs/ad/user
+locutus_target_isilon_path_samba_SA_pass_vault_path: kv1/SAs/ad/pass
+```
+
 Please also see the corresponding **OnPrem DICOM De-ID** module configuration and manifest sections, at:
 * [**OnPrem DICOM De-ID** module configuration](#cfg_onprem_dicoms)
     * [**OnPrem DICOM De-ID** module manifest](#cfg_onprem_dicoms_manifest)
@@ -400,7 +487,7 @@ Please also see the corresponding **DICOM Summarizer** command configuration and
 
 While the standard [**DICOM Summarizer** command](#highlevel_dicom_summarizer) will merely present a passive view of the current `manifest_status` for each accession in its input manifest (including status of `NOT_FOUND` when no corresponding **Locutus MANIFEST** record is yet found), the **DICOM Preloader** Summarizer sidecar is much more active.
 
-To streamline monitoring ongoing statuses **DICOM De-ID** batches,
+To streamline monitoring ongoing statuses of **DICOM De-ID** batches,
 the **DICOM Preloader** Summarizer sidecar dynamically updates the **Locutus MANIFEST** table `manifest_status` for each accession in the batch manifest,
 informed by that Locutus Workspace's active accession records in the **Locutus STATUS** table (as most recently Migrated from the Stager DB), and appended with a _preload_suffix_.
 
@@ -416,6 +503,10 @@ The **DICOM Preloader** Summarizer sidecar also references the current setting f
 * `locutus_debug_onprem_dicom_force_reprocess_accession_status` (with `dicom_summarize_stats_module='OnPrem'`, for the **OnPrem DICOM De-ID** module)
 
 ... in order to determine if an already-**PROCESSED** accessions shall be Preloaded as **ZZZ-ONDECK-*** for **RE-PROCESSING** (with `force_reprocess`=True) or left as **PROCESSED** (with `force_reprocess`=False).
+
+As mentioned in [📣 New in 2026: Manifest-Once Batches Approach 🎉](#2026_manifest-once_batches_approach), to support our new Manifest-Once Batches, the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) has been enhanced with a **Locutus Preloader Propagator** to propagate any freshing migrated NULL-named batch accessions in the Workspace's **Locutus STATUS** table for the currently named batch.  See also the **[Multi-UUID Resolver SIDEBAR: Locutus Migrator](#highlevel_dicom_multiuuid_resolver_sidebar_migrators)** for more information on the **Locutus Migrator** itself.
+
+As such, the Preloader shall be a crucial key to ensure that the currently specified Workspace's named batch shall be brought up to date with the latest and greatest accession UUIDs, including a corresponding manifest_status in the current Workspace's **Locutus MANIFEST** table for the named batch.
 
 **PRO TIP:** Preloading a Locutus **DICOM De-ID** batch allows for easy ad-hoc SQL queries that may be performed directly on the **Locutus MANIFEST** table.  These are especially fun while mid-processing multiple concurrent Locutus batches, reducing the need for calls to the full **DICOM Summarizer** command.
 
@@ -593,22 +684,32 @@ Our **DICOM Multi-UUID Resolver workflow** for a DICOM batch is as follows:
 	* `Imaging -> Locutus_XTRA_tools -> locutus-resolve-multiuuids-dicom-deploy`
 
 
-	**SIDEBAR**: **Locutus Migrators**
+----------------------------------------------------------------
 
-	The **Locutus Migrator** is built-in to Phase 02 of any **DICOM De-ID** module. It may even be invoked in a semi-stand-alone fashion by supplying an accession-less (headers only) manifest for the corresponding **DICOM De-ID** module.
+<A NAME="highlevel_dicom_multiuuid_resolver_sidebar_migrators"></A>
 
-	We have setup several automated nightly Jenkins **Locutus Migrator** jobs, one for each active Locutus Workspace to be kept up to date with the latest and greatest accession arrivals.  Although such Locutus Workspaces would eventually be brought up to date at the next run of their **DICOM De-ID** module, the nightly **Locutus Migrator** jobs allow the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) to Pre-load most accurately, with such latest and greatest accession updates duly noted at any time _prior_ to deployment of the **DICOM De-ID** module.
+##### **SIDEBAR**: **Locutus Migrators**
 
-	Directly related to the **DICOM Multi-UUID Resolver** and its actions, the **Locutus Migrator** can also cascade any UUID removals on into the other Locutus Workspaces by way of its following configuration setting, as enabled in each of the Jenkins jobs:
+The **Locutus Migrator** is built-in to Phase 02 of any **DICOM De-ID** module. It may even be invoked in a semi-stand-alone fashion by supplying an accession-less (headers only) manifest for the corresponding **DICOM De-ID** module.
 
-	* `locutus_dicom_remove_zombie_change_seq_ids_at_migration`
+**📣 New in 2026: Manifest-Once Batches 🎉** A new **"*NOOP*"** (**NO-OP**eration, accessionless) `batch_name` keyword may be used to invoke such an accession-less manifest, even if Jenkins might still want one linked to the Locutus Docker container for deployment.
 
-	While the **DICOM Multi-UUID Resolver** will immediately clear out any no-longer-needed Multi-UUID accession UUIDs from the respective Locutus Workspace in the Locutus DB, from the Stager DB, and from the Research PACS itself, all other Locutus Workspaces will not be brought up to speed with these changes until the next nightly **Locutus Migrator** run, or manual deployment of their **DICOM De-ID** module.
+We have setup several automated nightly Jenkins **Locutus Migrator** jobs, one for each active Locutus Workspace to be kept up to date with the latest and greatest accession arrivals.
 
-	**PRO TIP**:
-	If any other active Locutus Workspaces require these **DICOM Multi-UUID Resolver** changes to be reflected _sooner_ than their next nightly  **Locutus Migrator**, deploy the **AAA_Daily_Migrators_Orchestrator** Jenkins job, at:
+Although such Locutus Workspaces would eventually be brought up to date at the next run of their **DICOM De-ID** module, the nightly **Locutus Migrator** jobs allow the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader) to Pre-load most accurately, with such latest and greatest accession updates duly noted at any time _prior_ to deployment of the **DICOM De-ID** module.
 
-	* `Imaging -> A02_Migrators -> AAA_Daily_Migrators_Orchestrator`
+Directly related to the **DICOM Multi-UUID Resolver** and its actions, the **Locutus Migrator** can also cascade any UUID removals on into the other Locutus Workspaces by way of its following configuration setting, as enabled in each of the Jenkins jobs:
+
+* `locutus_dicom_remove_zombie_change_seq_ids_at_migration`
+
+While the **DICOM Multi-UUID Resolver** will immediately clear out any no-longer-needed Multi-UUID accession UUIDs from the respective Locutus Workspace in the Locutus DB, from the Stager DB, and from the Research PACS itself, all other Locutus Workspaces will not be brought up to speed with these changes until the next nightly **Locutus Migrator** run, or manual deployment of their **DICOM De-ID** module.
+
+**PRO TIP**:
+If any other active Locutus Workspaces require these **DICOM Multi-UUID Resolver** changes to be reflected _sooner_ than their next nightly  **Locutus Migrator**, deploy the **AAA_Daily_Migrators_Orchestrator** Jenkins job, at:
+
+* `Imaging -> A02_Migrators -> AAA_Daily_Migrators_Orchestrator`
+
+----------------------------------------------------------------
 
 9) **Confirm "Ready For Re-Send" to the Radiology team**
 
@@ -917,16 +1018,20 @@ and there is certainly much overlapping redundant code that could be consolidate
 Eventually integrate with enhanced logging capability (such as logging levels) and/or tools, but for now we primarily just take advantage of the "free logging" available from Jenkins itself when deploying the job as a foreground job (i.e., no `-d` included in the `XTRA_DOCKER_RUN_ARGS` referenced by [`./general_infra/deploy_etl.sh`](./general_infra/deploy_etl.sh)).
 
 
-##### Going manifest-free (at least, manifest-once, after a 1-time manifest load)
+**📣 New in 2026: Manifest-Once Batches 🎉**
+This feature is now live, from Philly, with love! 🎉🎉🎉
 
-Locutus currently expects a manifest for almost all of its processing. The management of such batch manifests is left to the operators. When dealing with multiple manifest variations throughout the lifecycle of a batch (e.g., when filtering accessions on a status needing re-processing, etc.), such manual manifest manipulations can become not only cumbersome, but potentially error-prone.
+Locutus previously expected a manifest for almost all of its processing, with the management of such batch manifests left to the operators. When dealing with multiple manifest variations throughout the lifecycle of a batch (e.g., when filtering accessions on a status needing re-processing, etc.), such manual manifest manipulations can become not only cumbersome, but potentially error-prone.
 
-Ideally, a future Locutus enhancement shall include options to load a project manifest into a Locutus Workspace one time (via, for example, a `load-manifest` command), and to thereafter process the project "manifest-free", either in its entirety, or by way of a configurable filter (e.g., only those currently in a non-PROCESSED state, etc.).
+This future-now Locutus enhancement includes options to load a project manifest into a Locutus Workspace one time (via the [**DICOM Preloader** Summarizer sidecar](#highlevel_dicom_preloader)), and to thereafter process the project "manifest-free", either in its entirety, or by way of a configurable filter (e.g., only those currently in a non-PROCESSED state, etc.).
 
-It may also be worth noting here that our Jenkins instance is used to deploy not only **DICOM De-ID** jobs on an as-needed basis, but also **DICOM Summarizer** jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
+It may also be worth noting here that our TRiG Jenkins instance is used to deploy not only **DICOM De-ID** jobs on an as-needed basis, but also **DICOM Summarizer** jobs, whether ad hoc or regularly scheduled (e.g., nightly detailed Summarizers, with weekly overview Summarizers).  Any such regulary scheduled Jenkins jobs currently require that a manifest initially be attached to the Jenkins job, with subsequent scheduled deployments reusing the same manifest.  This generally works quite well, but whenever the Jenkins instance goes through a system upgrade (such as during an RIS Quarterly Maintenance weekend) or otherwise requires an unanticipated cleanup,
 each Jenkins job will need the latest manifest manually re-attached.  With many such regularly scheduled Summarizers automated through Jenkins, this can likewise be unnecessarily cumbersome and potentially error-prone.
 
-Such a "manifest-once" enhancement, though still manifest-driven, would significantly streamline the entire processing lifecycle for a batch, from De-ID through to the Summarizer.
+Such a "manifest-once" enhancement, though still manifest-driven, significantly streamlines the entire processing lifecycle for a batch, from De-ID through to the Summarizer.
+
+For more information on the implementation, please see:
+* [📣 New in 2026: Manifest-Once Batches Approach 🎉](#2026_manifest-once_batches_approach)
 
 
 ----------------------------------------------------------------
@@ -1004,6 +1109,10 @@ configuration key | sample default value | description |
 ---- | ---- | ---- |
 locutus_target_use_isilon:     | False | if "True", use a destination on a mounted CHOP RIS isilon drive |
 locutus_target_isilon_path:     | "" | target destination mount point on the CHOP RIS isilon drive |
+locutus_target_isilon_path_is_samba:     | False | **OnPrem ONLY**: isilon target destination uses Samba protocol (necessary for Jenkins deployments within CHOP) |
+locutus_target_isilon_path_samba_server:     | "" | **OnPrem ONLY**: Samba server for isilon target destination (ex: ressmb05.research.chop.edu) |
+locutus_target_isilon_path_samba_SA_user_vault_path:     | "" | **OnPrem ONLY**: vault path to Samba service account for isilon target destination (ex: kv1/trig_SAs/ad_svc/ad_user) |
+locutus_target_isilon_path_samba_SA_pass_vault_path:     | "" | **OnPrem ONLY**: vault path to Samba service password for isilon target destination (ex: kv1/trig_SAs/ad_svc/ad_pass)|
 locutus_target_use_s3:     | False | if "True", use a destination bucket on a Managed AWS s3 |
 locutus_target_s3_bucket:     | chop-dbhi-eig-locutus | destination bucket for uploads into CHOP's Managed AWS s3 |
 locutus_target_use_gs:     | False | if "True", use a destination bucket on a Managed GCP GS |
@@ -1024,6 +1133,12 @@ locutus_disable_phase_sweep: | False | use "True" when processing multiple jobs 
 locutus_expand_phase_sweep_beyond_manifest: | False | use "True" when wanting to processing *any* objects awaiting Phase 4 or Phase 5 processing;<BR/>default is False to limit phase sweeps (when not otherwise disabled) to any objects not yet completely processed (through Phase 5) that are listed within the current input manifest (Currently only supported by the **DICOM De-ID** modules) |
 locutus_workspaces_enable: | False | use "True" when wanting to decouple a project's DB tables from the standard set of Locutus tables, allowing any multi-project accessions to have their own project-specific attributes. |
 locutus_workspace_name: | "default" | to identify & configure the Locutus module+workspace table names when `locutus_workspaces_enable` is  "True". |
+locutus_batch_name: | NULL | ?? |
+locutus_load_batch_from_DB_bypass_CSV_manifest: | False | ?? |
+locutus_batch_filter_statuses: | "" | ex: "status1 status2 ... statusM" |
+locutus_batch_filter_accession_nums: | "" | ex: "acc1 acc2 ... accN" |
+locutus_batch_filter_processed_date_range: | "" | ex: "MIN:MAX" |
+locutus_batch_filter_counter_range: | "" | ex: "1:n" to limit to the 1st n filtered accessions|
 locutus_dicom_bypass_migration: | False | use "True" to bypass the Phase 02 **Locutus Migrator** of any **DICOM De-ID** module |
 locutus_dicom_remove_zombie_change_seq_ids_at_migration: | False | use "True" for the **Locutus Migrator** to back-propagate any UUIDs removed via the **DICOM Multi-UUID Resolver**  |
 Jenkins' JOB_DESCRIPTION: | "" | informational info for CFG_OUT|
@@ -1033,6 +1148,44 @@ Jenkins' JENKINS_BUILD_NAME: | "" | informational info for CFG_OUT, of the gener
 Jenkins' JENKINS_BUILD_NUMBER: | "" | informational info for CFG_OUT, of the specific Jenkins job # deployed |
 Jenkins' LOCUTUS_DOCKERHOST_CONTAINER_NAME: | "" | informational info for CFG_OUT, of the current Docker container's name as deployed |
 Jenkins' LOCUTUS_DOCKERHOST_IMAGE_TAG: | "" | informational info for CFG_OUT, of the Docker image deployed into the current container |
+
+
+**📣 New in 2026: Manifest-Once Batches 🎉**
+
+New Manifest-Once Batches configuration settings include:
+* `locutus_load_batch_from_DB_bypass_CSV_manifest`
+* `locutus_batch_name`: w/ special keyword batch-name of **"*NOOP*"** (**NO-OP**eration) to indicate an accessionless manifest (*); any run of the Summarizer with the above `bypass_CSV: True` for a non-existent batch_name (in the current workspace) shall result in a list of all batch_names in the current workspace (**)
+* `locutus_batch_filter_statuses`: comma-separated exact matches, w/ special keywords of:
+        * `ERROR_WILDCARD` (manifest_status LIKE 'ERROR_%')
+        * `ZZZ_WILDCARD` (manifest_status LIKE 'ZZZ-ONDECK%')
+        * `PENDING_WILDCARD` (manifest_status LIKE '%PENDING_CHANGE%')
+        * `MULTIUUID_WILDCARD` (manifest_status LIKE '%ERROR_MULTIPLE_CHANGE_UUIDS%')
+* `locutus_batch_filter_accession_nums` comma-separated exact matches, e.g.,: `acc1,acc2,...,accN`
+* `locutus_batch_filter_processed_date_range` colon-separated date range, e.g.,: `2026-01-01:2026-03-31`
+* `locutus_batch_filter_counter_range` colon-separated post-filter counter range, e.g.,: `1:10` to only see the first ten batch-filtered accessions
+
+For further information on these exciting new Manifest-Once Batches capabilities, as well as a new global **AAA_LOCUTUS_BATCHES** table please refer to [📣 New in 2026: Manifest-Once Batches Approach 🎉](#2026_manifest-once_batches_approach).
+
+
+**📣 New in 2026: Samba support added to OnPrem De-ID module for Jenkins deployment 🎉**
+
+As mentioned in [**OnPrem DICOM De-ID** module](#highlevel_onprem_dicoms_samba), Internal CHOP Research IS infrastructure requires that any isilon file mount be dual-protocol configured, for both NFS (as for VM-based deployments) and SMB (for Jenkins-based deployments) file system protocols.
+
+Although only the **OnPrem DICOM De-ID** module has been integrated with the new `locutus_target_isilon_*` configuration settings to date, these settings are still shared here in the general Locutus settings since they are available to all such Locutus modules, merely awaiting integration with any other modules that might be in need.
+
+For Jenkins-based deployments requiring SMB, the Samba details may be configured as follows:
+
+```
+locutus_target_use_isilon:    True
+locutus_target_isilon_path:   //host_samba/trig_imaging/locutus_bgdlab_output/onprem_via_2026jenkins/
+# ^^^ SMB-mounted for Jenkins, as implied by the //host_samba host clue;
+# vvv Explicitly configured in this Locutus deployment for Samba with:
+locutus_target_isilon_path_is_samba: True
+locutus_target_isilon_path_samba_server: host_samba
+# NOTE: following assuming trig: namespace, trig:/kv1/[etc]
+locutus_target_isilon_path_samba_SA_user_vault_path: kv1/SAs/ad/user
+locutus_target_isilon_path_samba_SA_pass_vault_path: kv1/SAs/ad/pass
+```
 
 
 ----------------------------------------------------------------
@@ -1099,6 +1252,10 @@ locutus_onprem_dicom_subject_ID_preface: | | use any value as a preface to the s
 
 ###### Sample config.yaml for **OnPrem-DICOM-DeID** module:
 
+as updated with the latest and greated configuration options for:
+* **📣 New in 2026: Manifest-Once Batches 🎉**
+* **📣 New in 2026: Samba support added for Jenkins-based deployment 🎉**
+
 ```
 # sample Locutus config.yaml configuration File for an OnPrem DICOM De-ID module deployment
 
@@ -1118,9 +1275,33 @@ locutus_DB_vault_path: vault/path/databases/locutus
 locutus_workspaces_enable: True
 locutus_workspace_name: project01
 #
+# Locutus Manifest-Once Batches:
+locutus_load_batch_from_DB_bypass_CSV_manifest: True
+locutus_batch_name: proj01batch01
+#
+# with optional Batch Filters:
+#locutus_batch_filter_statuses: "ZZZ_WILDCARD,ERROR_WILDCARD"
+#locutus_batch_filter_accession_nums: "1001,1234,1370"
+#locutus_batch_filter_processed_date_range: "2026-04-16:2026-04-18"
+#locutus_batch_filter_counter_range: "1:3"
+#
+##################
+locutus_verbose: False
+##################
+#
 # Locutus targets:
 locutus_target_use_isilon:    True
 locutus_target_isilon_path:   /mount/point/imaging/locutus_output/onprem/dicom_deids
+#
+# ^^^ SMB-mounted for Jenkins, as implied by the //host_samba host clue;
+# vvv Explicitly configured in this Locutus deployment for Samba with:
+locutus_target_isilon_path_is_samba: True
+locutus_target_isilon_path_samba_server: host_samba
+# NOTE: following assuming trig: namespace, trig:/kv1/[etc]
+locutus_target_isilon_path_samba_SA_user_vault_path: kv1/SAs/ad/user
+locutus_target_isilon_path_samba_SA_pass_vault_path: kv1/SAs/ad/pass
+#
+#####
 locutus_debug_keep_interim_files: False
 #
 # force_success allows Locutus to carry on with the rest of the input manifest, for all but the most fatal of errors:
@@ -1146,6 +1327,9 @@ onprem_dicom_stage_config_vault_path: vault/path/stager/production
 # OnPrem interim processing directories:
 locutus_onprem_dicom_zip_dir:          /mount/point/imaging/locutus_interim_processing/onprem/phase03_orthanc_ids
 locutus_onprem_dicom_deidentified_dir: /mount/point/imaging/locutus_interim_processing/onprem/phase04_dicom_deids
+#
+# force_reprocess if processing to include previously processed accessions:
+locutus_debug_onprem_dicom_force_reprocess_accession_status: False
 #
 ###################################################
 ```
@@ -1233,6 +1417,9 @@ Additional **DICOM Summarizer** configuration options are available through the 
 
 ###### Sample config.yaml for **DICOM-Summarizer** command of the **OnPrem-DICOM-DeID** module:
 
+as updated with the latest and greated configuration options for:
+* **📣 New in 2026: Manifest-Once Batches 🎉**
+
 ```
 # sample Locutus config.yaml configuration File for a DICOM Summarizer command deployment for the OnPrem module
 
@@ -1248,6 +1435,17 @@ locutus_DB_vault_path: vault/path/databases/locutus
 locutus_workspaces_enable: True
 locutus_workspace_name: project01
 #
+# Locutus Manifest-Once Batches:
+locutus_load_batch_from_DB_bypass_CSV_manifest: True
+locutus_batch_name: proj01batch01
+#
+# with optional Batch Filters:
+#locutus_batch_filter_statuses: "ZZZ_WILDCARD,ERROR_WILDCARD"
+#locutus_batch_filter_accession_nums: "1001,1234,1370"
+#locutus_batch_filter_processed_date_range: "2026-04-16:2026-04-18"
+#locutus_batch_filter_counter_range: "1:3"
+#
+##################
 locutus_verbose: False
 ###################################################
 
@@ -1322,6 +1520,9 @@ Again, the **DICOM Preloader** Summarizer sidecar also references the current se
 
 ###### Sample config.yaml for **DICOM Preloader** Summarizer sidecar for the **OnPrem-DICOM-DeID** module:
 
+as updated with the latest and greated configuration options for:
+* **📣 New in 2026: Manifest-Once Batches 🎉**
+
 ```
 # sample Locutus config.yaml configuration File for a DICOM Summarizer Preloader sidecar deployment for the OnPrem module
 
@@ -1337,6 +1538,17 @@ locutus_DB_vault_path: vault/path/databases/locutus
 locutus_workspaces_enable: True
 locutus_workspace_name: project01
 #
+# Locutus Manifest-Once Batches:
+locutus_load_batch_from_DB_bypass_CSV_manifest: True
+locutus_batch_name: proj01batch01
+#
+# with optional Batch Filters:
+#locutus_batch_filter_statuses: "ZZZ_WILDCARD,ERROR_WILDCARD"
+#locutus_batch_filter_accession_nums: "1001,1234,1370"
+#locutus_batch_filter_processed_date_range: "2026-04-16:2026-04-18"
+#locutus_batch_filter_counter_range: "1:3"
+#
+##################
 locutus_verbose: False
 ###################################################
 
@@ -1359,6 +1571,9 @@ dicom_summarize_stats_redact_accessions: False
 #
 dicom_summarize_stats_preload_new_accessions_per_manifest: True
 dicom_summarize_stats_preload_new_accessions_per_manifest_preprocessing_suffix: 'batch123'
+#
+# force_reprocess to let Preloader know if processing is to include previously processed accessions:
+locutus_debug_onprem_dicom_force_reprocess_accession_status: False
 #
 # and enable_db, normally False except for actual Preloads (otherwise merely a dry run Preload):
 dicom_summarize_stats_enable_db_updates: True
@@ -1408,9 +1623,13 @@ configuration key | sample default value | description |
 dicom_summarize_stats_resolve_multiuuids: | False | set to True to run the Summarizer's Multi-UUID Resolver sidecar, allowing updates of any such multi-UUID accessions to support merges or re-sends from Radiology (see also the expanded Resolver manifest) |
 dicom_summarize_dicom_stage_config_vault_path: | trig:/kv1/trig-dicom-staging/production | Vault path to the DICOM Staging configuration (including nested details of the Research PACS) |
 dicom_summarize_stats_enable_db_updates: | False | set to True to allow Summarizer sidecar to update the database (normally read-only) |
+dicom_summarize_stats_resolve_multiuuids_suffix: | "" | custom suffix for any resolved Multi-UUID accessions, something such as "date_by_username" to offer resolution clues to users of other Locutus Workspaces which will likewise by updated by said Multi-UUID resolutions|
 
 
 ###### Sample config.yaml for **DICOM Multi-UUID Resolver** Summarizer sidecar for the **OnPrem-DICOM-DeID** module:
+
+as updated with the latest and greated configuration options for:
+* **📣 New in 2026: Manifest-Once Batches 🎉**
 
 ```
 # sample Locutus config.yaml configuration File for a DICOM Summarizer Multi-UUID Resolver sidecar deployment for the OnPrem module
@@ -1427,6 +1646,17 @@ locutus_DB_vault_path: vault/path/databases/locutus
 locutus_workspaces_enable: True
 locutus_workspace_name: project01
 #
+# Locutus Manifest-Once Batches:
+locutus_load_batch_from_DB_bypass_CSV_manifest: True
+locutus_batch_name: proj01batch01
+#
+# with optional Batch Filters:
+#locutus_batch_filter_statuses: "ZZZ_WILDCARD,ERROR_WILDCARD"
+#locutus_batch_filter_accession_nums: "1001,1234,1370"
+#locutus_batch_filter_processed_date_range: "2026-04-16:2026-04-18"
+#locutus_batch_filter_counter_range: "1:3"
+#
+##################
 locutus_verbose: False
 ###################################################
 
@@ -1458,6 +1688,9 @@ dicom_summarize_dicom_stage_config_vault_path trig:/kv1/trig-dicom-staging/
 # for Summarizer Multi-UUID Resolver sidecar:
 ###################################
 dicom_summarize_stats_resolve_multiuuids: True
+#
+# dicom_summarize_stats_resolve_multiuuids_suffix to offer clues for resolved accessions rippled to other Locutus Workspaces & Batches:
+dicom_summarize_stats_resolve_multiuuids_suffix: resolved17june2026_by_vivek_and_r3m0
 #
 # For initial testing dry run of the Resolver, do NOT yet enable DB updates:
 dicom_summarize_stats_enable_db_updates: False
@@ -1578,6 +1811,12 @@ Within this reference repo are some example scripts to assist in manually deploy
 
 * `./deploy_locutus_*.sh` (e.g., [`./deploy_locutus_onVM_dev_bgd_lab_onprem.sh`](./deploy_locutus_onVM_dev_bgd_lab_onprem.sh)) are higher-level scripts to invoke the base `run_docker` scripts, for relatively simple local deployments of a single Locutus container.
 
+----------------------------------------------------------------
+
+<A NAME="deployment_local_conductor"></A>
+
+#### The Locutus Conductor
+
 
 * [`./conduct_locutus_subbatches.sh`](./conduct_locutus_subbatches.sh) is the Locutus Conductor, to assist with larger manifests by sub-dividing the manifest and deploying the sub-manifests across multiple Locutus containers, perhaps even across multiple nodes. Please note that multiple nodes still require that the Conductor be manually run on each node with an argument list that would vary only by the particular sub-batch numbers to deploy on the given node.
 
@@ -1588,6 +1827,29 @@ Within this reference repo are some example scripts to assist in manually deploy
     * node2: `sudo -E ./conduct_locutus_subbatches.sh -m manifest_input.csv -s suffix -dDK -N 24 -r 9:16`
 
     * node3: `sudo -E ./conduct_locutus_subbatches.sh -m manifest_input.csv -s suffix -dDK -N 24 -r 17:24`
+
+
+	<A NAME="deployment_local_conductor_2026batches"></A>
+
+	#### 📣 New in 2026: Conductor support of Manifest-Once Batches 🎉
+
+	The Locutus Conductor now accepts the following additional manifest-once batch parameters:
+
+	* `-B batch_name` to indicate manifest-free;
+	<BR/>BATCH NOTE: this will automatically set `locutus_load_batch_from_DB_bypass_CSV_manifest`
+	as well `locutus_batch_name`
+
+	* `-F FilterStatus` corresponding to `locutus_batch_filter_statuses` for a single manifest_status (to override any `locutus_batch_filter_statuses` that might be configured in the current `config.yaml`)
+
+	* `-S Subtotal` as the expected batch size *following* application of any `batch_filters` from the current `config.yaml` and `-F FilterStatus` from above; this expected batch size shall be pre-calculated by the operator (through SQL or a Summarizer report), since the Conductor does not yet integrate directly with the Locutus DB)
+
+	For example, with an expected filtered batch size of 2,830 "batch30" accessions matching manifest_status=`ZZZ-ONDECK-4-PROCESSING_CHANGE:[...]`, the following command could be used to deploy 16 Locutus containers of about 177 (=2,830/16) accessions each:
+
+	*   `sudo -E ./conduct_locutus_subbatches.sh \` <BR/>
+	`-m r3m0_test_butterball_onprem.csv \` <BR/>
+	`-s scit605ConductTest05 -dD -N 16 -r 1:16 \` <BR/>
+	`-B batch 30 -S 2830 \` <BR/>
+	`-F ZZZ-ONDECK-4-PROCESSING_CHANGE:Viveks_OnPrem_scit605_batch30default`
 
 
 ----------------------------------------------------------------
@@ -1605,10 +1867,11 @@ To support such deployment through Jenkins, we have included the following gener
 * [`./general_infra/deploy_setup_vars.sh`](./general_infra/deploy_setup_vars.sh): low-level helper script to facilitate deployment of varying application types.
 * [`./general_infra/deploy_etl.sh`](./general_infra/deploy_etl.sh) : an ETL-oriented deployment script, to deploy the application but a single time.
 
-Within the same `./general_infra/` subdir also exist two pair of additional clues, as used in configuring the Jenkins jobs, one pair for `<type>=DeID`, and another for `<type>=Summarizer`:
 
-* `./general_infra/jenkins_sample_environment_properties_content_for_<type>>_job.txt`: (e.g., [`./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt`](./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt))  to pack a list of applicable environment variables into `XTRA_DOCKER_RUN_FLAGS`, to be passed into the Locutus container at deployment.
-* `./general_infra/jenkins_sample_execute_shell_for_<type>_job.txt`:  (e.g., [`./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt`](./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt)) a very thin wrapper around `./general_infra/deploy_etl.sh`
+Within the same `./general_infra/` subdir also exist two pair of additional clues, as used in configuring the Jenkins jobs, one pair for `TYPE=DeID`, and another for `TYPE=Summarizer`:
+
+* `./general_infra/jenkins_sample_environment_properties_content_for_TYPE_job.txt`: (e.g., [`./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt`](./general_infra/jenkins_sample_environment_properties_content_for_DeID_job.txt))  to pack a list of applicable environment variables into `XTRA_DOCKER_RUN_FLAGS`, to be passed into the Locutus container at deployment.
+* `./general_infra/jenkins_sample_execute_shell_for_TYPE_job.txt`:  (e.g., [`./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt`](./general_infra/jenkins_sample_execute_shell_for_DeID_job.txt)) a very thin wrapper around `./general_infra/deploy_etl.sh`
 
 
 ----------------------------------------------------------------
@@ -1682,3 +1945,15 @@ Again, should you be interested in helping generalize and enhance Locutus to mak
 Thank you!
 
 #### From the Brain-Gene Development Lab, the Translational Research Informatics Group, the Department of Biomedical Health Informatics, and all of the Children's Hospital of Philadelphia Research Institute, we would like to sincerely wish you a most productive time with Locutus.
+
+<div style="page-break-after: always;"></div>
+
+----------------------------------------------------------------
+
+#### From the Wayback Machine..... the original Face of Locutus, inspiring the entire project, and so much more.
+
+<IMG SRC="./docs/images/LocutusOfDBHI_titlecropEiG.jpeg" WIDTH="200" HEIGHT="200" />
+
+We would like to take these final few moments to thank Dr. Alex Felmeister for having developed the very first Jupyter notebook proof-of-concept implementation of dicom_anon back in 2017, laying the foundations for what grew to become the Locutus of today.  Thank you, Alex!
+
+----------------------------------------------------------------

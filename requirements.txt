@@ -61,3 +61,6 @@ python-magic
 # BUT python-magic-bin is not found via the Docker build,
 # disable locally for now...
 #python-magic-bin
+
+# for Samba client authorizations:
+smbprotocol
