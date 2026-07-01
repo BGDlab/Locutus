@@ -21,7 +21,7 @@ APP_NAME = 'Locutus'
 # NOTE: just found more to do with: APP_VERSION = '2025.06.13at0717=enhance_deploy_scripts_to_use_cmdline_args_for_manifest_and_suffix'
 # BUT FIRST....
 #########
-APP_VERSION = '2026.06.18at2013_Update_Conductor_default_branch_deploy_script_to_devBGDlab_after_PR_of_MOB_the_new_Manifest-Once_Batch_feature_and_Samba_etc'
+APP_VERSION = '2026.07.01at1209_enhance_MultiUUID_Resolver_with_MOB_the_new_Manifest-Once_Batch_feature_and_Samba_etc'
 #########
 # BEWARE of Code Smells all throughout Locutus; so sorry about that, fellow developers.
 # Locutus is most definitely long overdue for a refactoring to clean up some of those smells.

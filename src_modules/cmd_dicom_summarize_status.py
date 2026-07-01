@@ -638,14 +638,40 @@ class DICOMSummarizeStats:
                 curr_acc_module = curr_acc_module_moduleworkspace.split(',')[0].replace('(','')
                 curr_acc_workspace = curr_acc_module_moduleworkspace.split(',')[1].replace(')','')
 
-                # set default table start as ONPREM's default (no workspace):
+                # DEV NOTE: BEWARE of NULL/empty workspace names, once combined with the DISTINCT(module, workspace), may appear as "":
+                # locutus=# SELECT DISTINCT(module, workspace) as modspace FROM aaa_locutus_batches WHERE accession_num='4133777' AND active ORDER BY (module, workspace);
+                #   (GCP,"")
+                #   (GCP,bgd_through2024)
+                #   (ONPREM,onprem_bgd_scit605_2025)
+                #   (3 rows)
+                # AS SUCH, need to also check for a string of "", oh well, LOL.
+                # HENCE the addition of the following clause to each of the next if/elif:
+                #       and curr_acc_workspace != '""'
+
+                # set default table start as ONPREM's default manifest table name (for no workspace defined):
                 curr_acc_module_workspace_manifest_table = DEF_LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE
+                ###
+                #print('r3m0 DEBUG: BATCHES LOOP FOR module=\'{0}\'/workspace=\'{1}\', INITIALLY setting curr_acc_module_workspace_manifest_table as default OnPrem MANIFEST=\'{2}\'.'.format(
+                #    curr_acc_module, curr_acc_workspace, curr_acc_module_workspace_manifest_table), flush=True)
+                ###
                 # NOTE: module will have been set by Preloader/etc as .upper():
                 # NOTE: currently running with only ONPREM modules:
-                if curr_acc_module == 'ONPREM' and curr_acc_workspace and len(curr_acc_workspace):
-                    # non-empty workspace, go ahead and build up its manifest table name:
+                if curr_acc_module == 'ONPREM' and (curr_acc_workspace and len(curr_acc_workspace) and curr_acc_workspace != '""'):
+                    # non-empty OnPrem workspace, go ahead and build up its manifest table name:
                     curr_acc_module_workspace_manifest_table = WS_LOCUTUS_ONPREM_TABLE_PREFIX + \
                                                     curr_acc_workspace + WS_LOCUTUS_ONPREM_MANIFEST_TABLE_SUFFIX
+                    print('Locutus {0}.update_accession_manifest_status_across_all_workspaces() DEBUG: BATCHES LOOP FOUND as OnPrem w/ WORKSPACE, FOR module=\'{1}\'/workspace=\'{2}\', NOW setting curr_acc_module_workspace_manifest_table as OnPrem workspace MANIFEST=\'{3}\'.'.format(CLASS_PRINTNAME, curr_acc_module, curr_acc_workspace, curr_acc_module_workspace_manifest_table), flush=True)
+                elif curr_acc_module == 'ONPREM':
+                    # empty ONPREM workspace, leaving as the default ONPREM manifest table name:
+                    print('Locutus {0}.update_accession_manifest_status_across_all_workspaces() DEBUG: BATCHES LOOP FOUND as OnPrem w/out WORKSPACE, FOR module=\'{1}\'/workspace=\'{2}\', NOW leaving curr_acc_module_workspace_manifest_table as OnPrem default MANIFEST=\'{3}\'.'.format(CLASS_PRINTNAME, curr_acc_module, curr_acc_workspace, curr_acc_module_workspace_manifest_table), flush=True)
+                else:
+                    # empty ONPREM workspace, leaving as the default ONPREM manifest table name:
+                    print('Locutus {0}.update_accession_manifest_status_across_all_workspaces() ERROR: BATCHES LOOP FOUND as UNKNOWN module=\'{1}\'/workspace=\'{2}\'.'.format(
+                                CLASS_PRINTNAME, curr_acc_module, curr_acc_workspace), flush=True)
+                    # TODO: raise ValueError(), as this is neither an ONPREM nor a GCP module.
+                    raise ValueError('Locutus {0}.update_accession_manifest_status_across_all_workspaces() ERROR: unexpected module=\'{1}\' encountered in AAA_LOCUTUS_BATCHES for accession=\'{2}\'; only ONPREM currently supported'.format(
+                                CLASS_PRINTNAME, curr_acc_module, curr_acc_workspace))
+
                 if self.locutus_settings.LOCUTUS_VERBOSE:
                     print('{0}.update_accession_manifest_status_across_all_workspaces(): '\
                                     'Looking at accession=`{1}`s next Module/Workspace: '\
