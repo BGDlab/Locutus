@@ -387,7 +387,7 @@ class DICOMSummarizeStats:
                                                         dw_host=self.locutus_settings.trig_secrets_dw_host,
                                                         dev=stager_db_use_dev_suffix)
 
-                # Setup the connection engine for OnPrem's local DICOM staging DB connection string
+                # Setup the connection engine for the local DICOM staging DB connection string
                 StagerDBengine = create_engine(self.stager_target_db)
                 self.StagerDBconn = StagerDBengine.connect()
                 StagerSession = sessionmaker(bind=self.StagerDBconn, autocommit=True)
@@ -512,7 +512,7 @@ class DICOMSummarizeStats:
             #
             ###################################
             # NOTE: ensure that resolve_multiuuids ALSO lists the resolve_uuids manifest_ver!
-            # with support for OnPrem:
+            # with support for the DICOM De-ID modules:
             #
             elif ((len(csv_headings_row) < src_modules.settings.MANIFEST_NUM_HEADERS) or
                 (csv_header0 != src_modules.settings.MANIFEST_HEADER_ACCESSION_NUM)):
@@ -611,7 +611,7 @@ class DICOMSummarizeStats:
                                 self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE,
                                 accession_num)
         if self.locutus_settings.LOCUTUS_VERBOSE:
-            print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, self.manifest_table), flush=True)
+            print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE), flush=True)
             print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, acc_module_workspaces_sql_select), flush=True)
         ###################
         # DO IT! Go ahead and actually execute that prepdate_sql_select
@@ -625,6 +625,7 @@ class DICOMSummarizeStats:
             ###################
             curr_acc_module = ''
             curr_acc_workspace = ''
+            curr_acc_workspace_for_all_batches = ''
             # NOTE: SHOULD USE a macro for conversion to WORKSPACE tables, but here we are:
             curr_acc_module_workspace_manifest_table = ''
 
@@ -637,6 +638,9 @@ class DICOMSummarizeStats:
                 # and extract em from "(module,workspace)", replacing both '(' and ')' with '':
                 curr_acc_module = curr_acc_module_moduleworkspace.split(',')[0].replace('(','')
                 curr_acc_workspace = curr_acc_module_moduleworkspace.split(',')[1].replace(')','')
+                #WAS: curr_acc_workspace_for_all_batches_query = '= \'{0}\' '.format(curr_acc_workspace)
+                # DEV NOTE: ABOVE curr_acc_workspace_for_all_batches_query included "='...'", BUT omit these "=" and quotes for later: AND workspace=\'{4}\':
+                curr_acc_workspace_for_all_batches_query = curr_acc_workspace
 
                 # DEV NOTE: BEWARE of NULL/empty workspace names, once combined with the DISTINCT(module, workspace), may appear as "":
                 # locutus=# SELECT DISTINCT(module, workspace) as modspace FROM aaa_locutus_batches WHERE accession_num='4133777' AND active ORDER BY (module, workspace);
@@ -655,7 +659,7 @@ class DICOMSummarizeStats:
                 #    curr_acc_module, curr_acc_workspace, curr_acc_module_workspace_manifest_table), flush=True)
                 ###
                 # NOTE: module will have been set by Preloader/etc as .upper():
-                # NOTE: currently running with only ONPREM modules:
+                # NOTE: currently running with only DICOM De-ID modules:
                 if curr_acc_module == 'ONPREM' and (curr_acc_workspace and len(curr_acc_workspace) and curr_acc_workspace != '""'):
                     # non-empty OnPrem workspace, go ahead and build up its manifest table name:
                     curr_acc_module_workspace_manifest_table = WS_LOCUTUS_ONPREM_TABLE_PREFIX + \
@@ -664,8 +668,12 @@ class DICOMSummarizeStats:
                 elif curr_acc_module == 'ONPREM':
                     # empty ONPREM workspace, leaving as the default ONPREM manifest table name:
                     print('Locutus {0}.update_accession_manifest_status_across_all_workspaces() DEBUG: BATCHES LOOP FOUND as OnPrem w/out WORKSPACE, FOR module=\'{1}\'/workspace=\'{2}\', NOW leaving curr_acc_module_workspace_manifest_table as OnPrem default MANIFEST=\'{3}\'.'.format(CLASS_PRINTNAME, curr_acc_module, curr_acc_workspace, curr_acc_module_workspace_manifest_table), flush=True)
+                    # AND: ensuring that the AAA_LOCUTUS_BATCHES query won't get caught with the same "" issue:
+                    #WAS: curr_acc_workspace_for_all_batches_query = '= \'\' '
+                    # DEV NOTE: ABOVE curr_acc_workspace_for_all_batches_query included "='...'", BUT omit these "=" and quotes for later: AND workspace=\'{4}\':
+                    curr_acc_workspace_for_all_batches_query = ''
                 else:
-                    # empty ONPREM workspace, leaving as the default ONPREM manifest table name:
+                    # UNKNOWN module:
                     print('Locutus {0}.update_accession_manifest_status_across_all_workspaces() ERROR: BATCHES LOOP FOUND as UNKNOWN module=\'{1}\'/workspace=\'{2}\'.'.format(
                                 CLASS_PRINTNAME, curr_acc_module, curr_acc_workspace), flush=True)
                     # TODO: raise ValueError(), as this is neither an ONPREM nor a GCP module.
@@ -674,12 +682,13 @@ class DICOMSummarizeStats:
 
                 if self.locutus_settings.LOCUTUS_VERBOSE:
                     print('{0}.update_accession_manifest_status_across_all_workspaces(): '\
-                                    'Looking at accession=`{1}`s next Module/Workspace: '\
-                                    'DICOM module=`{2}`, workspace=`{3}`, table=`{4}`'.format(
+                                    'Looking at accession=\`{1}\`s next Module/Workspace: '\
+                                    'DICOM module=\`{2}\`, workspace=\`{3}\` (w/ AAA_LOCUTUS_BATCHES query via: \'{4}\'), table=\`{5}\`'.format(
                                     CLASS_PRINTNAME,
                                     accession_num,
                                     curr_acc_module,
                                     curr_acc_workspace,
+                                    curr_acc_workspace_for_all_batches_query,
                                     curr_acc_module_workspace_manifest_table),
                                     flush=True)
                 # NOTE: TODO: check on DRYRUN before any UPDATES
@@ -702,7 +711,7 @@ class DICOMSummarizeStats:
                                                 curr_acc_module_workspace_manifest_table,
                                                 accession_range_where)
                 if self.locutus_settings.LOCUTUS_VERBOSE:
-                    print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, self.manifest_table), flush=True)
+                    print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, curr_acc_module_workspace_manifest_table), flush=True)
                     print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select), flush=True)
                 ###################
                 # DO IT! Go ahead and actually execute that preupdate_sql_select
@@ -758,9 +767,9 @@ class DICOMSummarizeStats:
                                                 self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE,
                                                 accession_range_where,
                                                 curr_acc_module,
-                                                curr_acc_workspace)
+                                                curr_acc_workspace_for_all_batches_query)
                 if self.locutus_settings.LOCUTUS_VERBOSE:
-                    print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, self.manifest_table), flush=True)
+                    print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE), flush=True)
                     print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select), flush=True)
                 ###################
                 # DO IT! Go ahead and actually execute that preupdate_sql_select
@@ -783,7 +792,7 @@ class DICOMSummarizeStats:
                                                 new_manifest_status,
                                                 accession_range_where,
                                                 curr_acc_module,
-                                                curr_acc_workspace)
+                                                curr_acc_workspace_for_all_batches_query)
                 if self.locutus_settings.LOCUTUS_VERBOSE:
                     print(self.locutus_settings.SQL_OUT_PREFIX, update_sql, flush=True)
                 #
@@ -1524,6 +1533,7 @@ class DICOMSummarizeStats:
         # end of reactivate_accession_manifest_only()
 
 
+    # As recycled from modules_onprem_dicom.py:preretire_accession_manifest_only()
     # NOTE: Juneteenth 2025 upgrade: also deprecating SPLIT multi-UUIDs:
     # NOTE: if not batch_only, shall retire all MANIFEST records for this accession in this Workspace;
     #       else, if batch_only, shall ONLY retire those for THIS batch in this Workspace.
@@ -2026,11 +2036,12 @@ class DICOMSummarizeStats:
                         # Still, just take the 1st one, and carry on
                     ## >= 1, grab the first:
                     first_status_rec = curr_status_results_for_this_batch[0]
-                    print('r3m0 DEBUG: Preloader about to utilize and INSERT vals from curr_status_results_for_this_batch == 1, including: '\
-                        'accession_num=\'{0}\', uuid=\'{1}\', change_type=\'{2}\', change_seq_id={3}, '\
-                        'RESETTING phase_processed={4} to {5}, '\
-                        'RESETTING datetime_processed=\'{6}\' to now(), '\
-                        'RESETTING batch_name=\'{7}\' to NULL, '.format(
+                    if self.locutus_settings.LOCUTUS_VERBOSE:
+                        print('r3m0 DEBUG: Preloader about to utilize and INSERT vals from curr_status_results_for_this_batch == 1, including: '\
+                            'accession_num=\'{0}\', uuid=\'{1}\', change_type=\'{2}\', change_seq_id={3}, '\
+                            'RESETTING phase_processed={4} to {5}, '\
+                            'RESETTING datetime_processed=\'{6}\' to now(), '\
+                            'RESETTING batch_name=\'{7}\' to NULL, '.format(
                             first_status_rec['accession_num'],
                             first_status_rec['uuid'],
                             first_status_rec['change_type'],
@@ -2375,26 +2386,30 @@ class DICOMSummarizeStats:
                 # i.e., if preload_status = self.locutus_settings.ONDECK_ERROR_MULTIPLE_CHANGE_UUIDS_PREFIX
 
                 curr_status_results_for_batchless_default_uuids = [item['uuid'] for item in curr_status_results_for_batchless_default]
-                print('r3m0 DEBUG: len(curr_status_results_for_batchless_default)={0}, curr_status_results_for_batchless_default={1}'.format(
-                    len(curr_status_results_for_batchless_default), curr_status_results_for_batchless_default
-                ), flush=True)
+                if self.locutus_settings.LOCUTUS_VERBOSE:
+                    print('r3m0 DEBUG: len(curr_status_results_for_batchless_default)={0}, curr_status_results_for_batchless_default={1}'.format(
+                        len(curr_status_results_for_batchless_default), curr_status_results_for_batchless_default
+                    ), flush=True)
 
                 curr_status_results_for_this_batch_uuids = [item['uuid'] for item in curr_status_results_for_this_batch]
-                print('r3m0 DEBUG: len(curr_status_results_for_this_batch)={0}, curr_status_results_for_this_batch={1}'.format(
-                    len(curr_status_results_for_this_batch), curr_status_results_for_this_batch
-                ), flush=True)
+                if self.locutus_settings.LOCUTUS_VERBOSE:
+                    print('r3m0 DEBUG: len(curr_status_results_for_this_batch)={0}, curr_status_results_for_this_batch={1}'.format(
+                        len(curr_status_results_for_this_batch), curr_status_results_for_this_batch
+                    ), flush=True)
 
                 # NOTE: below comparison limited to ONLY the uuid field (and maybe the accession_num?) since other record fields will certainly vary
                 status_uuids_ONLY_to_insert = [item for item in curr_status_results_for_batchless_default_uuids if item not in curr_status_results_for_this_batch_uuids]
-                print('r3m0 DEBUG: len(status_uuids_ONLY_to_insert)={0}, status_uuids_ONLY_to_insert={1},'.format(
-                    len(status_uuids_ONLY_to_insert), status_uuids_ONLY_to_insert
-                ), flush=True)
+                if self.locutus_settings.LOCUTUS_VERBOSE:
+                    print('r3m0 DEBUG: len(status_uuids_ONLY_to_insert)={0}, status_uuids_ONLY_to_insert={1},'.format(
+                        len(status_uuids_ONLY_to_insert), status_uuids_ONLY_to_insert
+                    ), flush=True)
                 # HOTFIX HACK WARNING: using the hardcoded expected STATUS_RECORD_UUUID_FIELDNUM from the SELECT acc, phase, uuid, ..
                 # TODO: consider an alternate approach? First, though, confirm that STATUS_RECORD_UUID_FIELDNUM does indeed return the expected base 0 UUID field:
                 status_uuids_to_insert = [item for item in curr_status_results_for_batchless_default if item[STATUS_RECORD_UUID_FIELDNUM] in status_uuids_ONLY_to_insert]
-                print('r3m0 DEBUG: len(status_uuids_to_insert)={0}, status_uuids_to_insert={1},'.format(
-                    len(status_uuids_to_insert), status_uuids_to_insert
-                ), flush=True)
+                if self.locutus_settings.LOCUTUS_VERBOSE:
+                    print('r3m0 DEBUG: len(status_uuids_to_insert)={0}, status_uuids_to_insert={1},'.format(
+                        len(status_uuids_to_insert), status_uuids_to_insert
+                    ), flush=True)
 
                 if len(curr_status_results_for_this_batch):
                     if self.locutus_settings.LOCUTUS_VERBOSE:
@@ -3959,20 +3974,6 @@ class DICOMSummarizeStats:
             # above previously_resolved is now ambiguous, split into...
             # b) those explicitly resolved in previous sessions and already with a PENDING_CHANGE_RADIOLOGY_RESEND
             formerly_resolved = True
-        ########
-        # NOTE: moving this elif down into the elif resolve_cmd == RESOLVE_VIA_MERGE_RADIOLOGY or RESOLVE_VIA_CONSOLIDATE_LOCALLY:
-        #elif num_accession_parts == 1 \
-        #    and resolve_cmd == RESOLVE_VIA_CONSOLIDATE_LOCALLY:
-        #    print('Summarizer::resolve_multiuuids()... *SEEMINGLY* FORMERLY RESOLVED accession {0} to {1} in a previous such session (via {2}), already down to 1 record, with manifest_status={3}'.format(
-        #        accession_num, RESOLVE_VIA_CONSOLIDATE_LOCALLY, manifest_status), flush=True)
-        #    # previously_resolved = True
-        #    # above previously_resolved is now ambiguous, split into...
-        #    # c) those implicitly resolved in previous sessions, regardless of the manifest_status:
-        #    formerly_resolved = True
-        #    # NOTE: not necessarily true. this COULD be the case whereby a single MANIFEST record
-        #    # was not yet "split" into sub-accessions (especially since no longer doing so!),
-        #    # yet still with multiple STATUS records
-        ########
         elif manifest_status == self.locutus_settings.MANIFEST_OUTPUT_STATUS_NOT_FOUND:
             print('Summarizer::resolve_multiuuids()... UNABLE TO FIND accession \'{0}\' to resolve as manifest_status=\'{1}\''.format(
                 accession_num, manifest_status), flush=True)
@@ -3994,21 +3995,6 @@ class DICOMSummarizeStats:
             resolve_accession_whole = accession_num
             # and
             resolve_manifest_status = f'UNKNOWN_RESOLVE_SUBCMD:{resolve_cmd}'
-
-            # NOTE: num_accession_parts == 1 PRESUMES a single batch being evaluated;
-            # TODO: limit above SELECT COUNT(*) to include the batch_name
-            # NOTE: even if NOT YET resolved, a single batch SHOULD have but 1 part,
-            # and it does NOT imply a previous resolution:
-            # Q: =====> why specific to the CONSOLIDATE_LOCALLY????
-            if num_accession_parts == 1 \
-            and resolve_cmd == RESOLVE_VIA_CONSOLIDATE_LOCALLY:
-                # r3m0: TODO: Q: confirm that this print is even relevant enough to retain?
-                print('Summarizer::resolve_multiuuids()... *SEEMINGLY* FORMERLY RESOLVED '\
-                    '(*OR* MERELY NEWLY PRE-LOADED) accession \'{0}\' in a previous such session '\
-                    '(via {1}), currently w/ only 1 MANIFEST record, with manifest_status={2}, '\
-                    'so... carrying on into STATUS records in case more.'.format(
-                    accession_num, RESOLVE_VIA_CONSOLIDATE_LOCALLY, manifest_status), flush=True)
-            # NOTE: first pass, just let it drop on down and see what happens:
 
             if ((resolve_cmd == RESOLVE_VIA_MERGE_RADIOLOGY) or (resolve_cmd == RESOLVE_VIA_RESEND_RADIOLOGY)):
                 (resolve_cmd_success, resolve_accession_whole, resolve_manifest_status) \
@@ -4536,13 +4522,15 @@ class DICOMSummarizeStats:
                 accession_duplicated = ACCESSION_DUPLICATED
                 total_duplicates += 1
             accession_list.append(accession_str)
+
             if self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS and self.locutus_settings.LOCUTUS_VERBOSE:
-                print('{0}.Process(): Looking for accession # `{1}` (from input column offset {2}) within DICOM module `{3}` in table `{4}`'.format(
+                print('{0}.Process(): Looking for accession # `{1}` (from input column offset {2}) within DICOM module `{3}` in table `{4}` for batch `{5}`'.format(
                                     CLASS_PRINTNAME,
                                     accession_str,
                                     self.locutus_settings.input_manifest_source_column,
                                     self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE,
-                                    self.manifest_table),
+                                    self.manifest_table,
+                                    batch_clause),
                                     flush=True)
             # BATCHES NOTE: filtering by batch_clause for the following accession query of manifest_status:
             manifest_status_result = self.LocutusDBconnSession.execute('SELECT manifest_status, '\
@@ -4689,7 +4677,9 @@ class DICOMSummarizeStats:
                     # be sure to leave an empty column for the data-less ONPREM_MANIFEST_HEADER_MANIFEST_VER:
                     module_specific_manifest_columns += ','
 
+                    # NOTE: expanded view of "PROCESSED" as "LIKE 'PROCESSED%'", for potential "PROCESSED_THEN_RESOLVED_", etc
                     if (manifest_status == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED) \
+                        or (manifest_status.upper()[:len(self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED)] == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED) \
                         or (('PREVIOUS_PROCESSING_USED_' not in manifest_status) \
                             and (   (manifest_status.upper()[:len(self.locutus_settings.MANIFEST_OUTPUT_STATUS_ERROR_MULTIPLE_PREFIX)] == self.locutus_settings.MANIFEST_OUTPUT_STATUS_ERROR_MULTIPLE_PREFIX) \
                                  or (manifest_status.upper()[:len(self.locutus_settings.MANIFEST_OUTPUT_STATUS_MULTIPLE_SPLITS_PREFIX)] == self.locutus_settings.MANIFEST_OUTPUT_STATUS_MULTIPLE_SPLITS_PREFIX)) ):
@@ -4713,9 +4703,14 @@ class DICOMSummarizeStats:
                             (curr_object_info_01 != prev_object_info_01) or \
                             (curr_object_info_02 != prev_object_info_02) or \
                             (curr_object_info_03 != prev_object_info_03):
-                            if manifest_status == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED:
+
+                            # NOTE: expanded view of "PROCESSED" as "LIKE 'PROCESSED%'", for potential "PROCESSED_THEN_RESOLVED_", etc
+                            if (manifest_status == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED) \
+                                or (manifest_status.upper()[:len(self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED)] == self.locutus_settings.MANIFEST_OUTPUT_STATUS_PROCESSED) :
                                 # for PROCESSED, replace the status entirely:
                                 manifest_status = 'PREVIOUS_PROCESSING_USED_'
+
+
                             else:
                                 # for MULTIPLEs (either ERROR or already SPLIT), append:
                                 manifest_status += '_' + self.locutus_settings.MANIFEST_OUTPUT_STATUS_PREVIOUS_PROCESSING_PREFIX  # 'PREVIOUS_PROCESSING_USED_'

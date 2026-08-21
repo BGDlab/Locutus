@@ -841,7 +841,7 @@ class OnPrem_Dicom:
     # if Staged accession_str = VIRT1234, and Locutus previously used accession_num = 1234, then:
     #   if the curr Locutus accession_num = 1234, then UPGRADE Locutus acc to VIRT1234
     #   else if the Locutus accession_num = 1234.001, .002, etc., then UPGRADE to VIRT1234.001, .002, etc.
-    # BATCHES NOTE: do not include any self.batch_clause here in upgrade_alphanum_accessions_for_Juneteenth(), allow it to span all.
+    # BATCHES NOTE: do not include any self.batch_clause here in create_db_tables(), allow it to span all.
     ####################
     def upgrade_alphanum_accessions_for_Juneteenth(self, curr_status_table, curr_manifest_table):
         if curr_status_table == LOCUTUS_ONPREM_DICOM_STATUS_TABLE \
@@ -1387,7 +1387,7 @@ class OnPrem_Dicom:
         # For more control over creating a non-empty exception, replacing:
         if not os.path.isdir(local_path):
             # TODO: consider checking self.locutus_settings.LOCUTUS_FORCE_SUCCESS,
-            # but since this is required (e.g., to upload into GS for GCP-based DeID),
+            # but since this is required to upload into,
             # it really is a show stopper at this point:
             raise ValueError('Directory not found for copy_local_directory_to_Orthanc() local path of "{0}".'.format(
                                 local_path))
@@ -1667,7 +1667,7 @@ class OnPrem_Dicom:
         #####################################
         # TODO: eventually add further support for user-configurable overrides.
         #####################################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active module tablename
         #########################
 
         if self.locutus_settings.LOCUTUS_VERBOSE:
@@ -1714,7 +1714,7 @@ class OnPrem_Dicom:
         #####################################
         # TODO: eventually add further support for user-configurable overrides.
         #####################################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active module tablename
         #########################
 
         if self.locutus_settings.LOCUTUS_VERBOSE:
@@ -1736,7 +1736,7 @@ class OnPrem_Dicom:
             # Add checks any module-specific cfg['config_type'] that support user-configurable overrides,
             #   and would therefore not automatically utilize the default.
             # For example, although the ONPREM DICOM module does not yet expose its dicom_anon configurations,
-            # consider eventual module user-configurable options for:
+            # consider eventual modules user-configurable options for:
             #   * image_mode, and,
             #   * (eventually) keeplist_ver
             ######
@@ -1817,7 +1817,7 @@ class OnPrem_Dicom:
         # TODO: return not just a True/False for matching but ALSO a previous vs current version &/or date, perhaps?
         # and separately, for the PREVIOUS_PROCESSING_USED to split much like it does with the manifest attributes.
         #####################################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active module tablename
         #########################
         # NOTE: comparison refers to the internally defined int_cfgs as RAM or RAM-ACTIVE versions
         #   as -vs- the ACTIVE-DB version.
@@ -1967,7 +1967,7 @@ class OnPrem_Dicom:
         # compare the internally known internal configuations against those in the internal configs table,
         # setting the most active within the DB.
         #########################
-        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active tablename
+        # TODO: move this into main_locutus.py, for all modules to use, given the int_cfgs and active module tablename
         #########################
         # NOTE: the LOCUTUS_*DICOM_INT_CFGS_TABLE is assumed to have already been created by this point,
         #   but might be empty, or perhaps already populated with active (or previously active) cfgs.
@@ -2324,12 +2324,16 @@ class OnPrem_Dicom:
             return in_val
 
 
-    def rollback_accession_status_phase_processed(self,
-                                        accession_num,
-                                        last_phase_processed):
+    def rollback_accession_status_phase_processed(self, accession_num, last_phase_processed, limit_to_batch=True):
         # helper method to update ONLY the corresponding STATUS record's phase_processed for an accession_num
         # to roll it back to the last matching config phase,
         # pending results from compare_active_internal_configs_vs_processed()
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
+
         # BATCHES NOTE: limit to the current self.batch_clause:
         # BATCHES NOTE: STATUS UPDATES need no parallel UPDATE in LOCUTUS_ALL_BATCHES_TABLE.
         # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
@@ -2346,10 +2350,30 @@ class OnPrem_Dicom:
     # TODO: combine Settings:retire_accession*() & De-ID:preretire_accession*()
     # incl their sub-methods, (pre)retire_accession_[status/manifest]_only()
     # for a single centralized set of methods to maintain:
-    def preretire_change_status_only(self, change_seq_id):
+    def preretire_change_status_only(self, change_seq_id, limit_to_batch=False):
         # helper method to update and retire ONLY the corresponding STATUS records for a change_seq_id only
         # (for where the corresponding status record in the current workspace is no longer valid,
         # such as following a workspace migration's removal of a zombie change from another workspace...)
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
+
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('VERBOSE {0}.preretire_change_status_only(): Hello! '\
+                    'for change_seq_id={1} '\
+                    'w/ limit_to_batch={2} & local_batch_clause=\'{3}\'.'.format(
+                        CLASS_PRINTNAME,
+                        change_seq_id,
+                        local_batch_clause), flush=True)
+
+        #
+        # SQL comment prior to the actual SQL command:
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('{0}-- # -- -- -- -- -- -- -- --'.format(self.locutus_settings.SQL_OUT_PREFIX), flush=True)
+            print('{0}-- # START of {1}.preretire_change_status_only(change_seq_id=\'{2}\'):'.format(self.locutus_settings.SQL_OUT_PREFIX, CLASS_PRINTNAME, change_seq_id), flush=True)
+        #
 
         # BATCHES NOTE: now reference init's self.batch_clause rather than rebuilding it in multiple places:
         # DONE: consider removing batch_only & batch_name from this method's parameters, now that using self.batch_clause
@@ -2360,31 +2384,98 @@ class OnPrem_Dicom:
         # BATCHES NOTE: limit to the current self.batch_clause????
         # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
         # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
-        self.LocutusDBconnSession.execute('UPDATE {0} '\
-                                        'SET change_seq_id=(-1*change_seq_id), '\
-                                        '    accession_num=concat(\'-\', accession_num), '\
-                                        '    active=False '\
-                                        'WHERE change_seq_id = {1} '\
-                                        '   AND active {2} ;'.format(
-                                        LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                        change_seq_id,
-                                        self.batch_clause))
+
+        # BATCHES NOTE: DISTINCT() eliminates need for self.batch_clause, since *should* be same across all batches:
+        # BATCHES NOTE: EITHER WAY, go ahead and preretire the accession w/o self.batch_clause (as per local_batch_clause) to span across all batches in this workspace:
+        preupdate_sql_select='SELECT change_seq_id, (-1*change_seq_id) as new_change_seq_id, '\
+                            '    accession_num, concat(\'-\', accession_num) as new_acc_num, '\
+                            '    active, False as new_active '\
+                            ' FROM {0} '\
+                            'WHERE change_seq_id = {1} '\
+                            '   AND active {2} ;'.format(
+                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                            change_seq_id,
+                            local_batch_clause)
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, LOCUTUS_ONPREM_DICOM_STATUS_TABLE), flush=True)
+            print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select), flush=True)
+        ###################
+        # DO IT! Go ahead and actually execute that preupdate_sql_select
+        # in order to preserve those values in the output log (as well as in the retired accessions)
+        preupdate_sql_select_results =  self.LocutusDBconnSession.execute(preupdate_sql_select)
+        for preupdate_sql_select_result in preupdate_sql_select_results.fetchall():
+            if self.locutus_settings.LOCUTUS_VERBOSE:
+                print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select_result), flush=True)
+        ###################
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('{0}-- #'.format(self.locutus_settings.SQL_OUT_PREFIX), flush=True)
+        # and NOW, the actual UPDATE:
+        # BATCHES NOTE: do not include any self.batch_clause here in preretire (as per local_batch_clause), allow it to span all.
+        update_sql='UPDATE {0} '\
+                            'SET change_seq_id=(-1*change_seq_id), '\
+                            '    accession_num=concat(\'-\', accession_num), '\
+                            '    active=False '\
+                            'WHERE change_seq_id = {1} '\
+                            '   AND active {2} ;'.format(
+                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                            change_seq_id,
+                            local_batch_clause)
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print(self.locutus_settings.SQL_OUT_PREFIX, update_sql, flush=True)
+            # SQL blank line at end of all this method's SQL:
+            print(self.locutus_settings.SQL_OUT_PREFIX, flush=True)
+
+        #######
+        # NOTE: considering ENABLE_DB_UPDATES &/or LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION:
+        #
+        #WAS: if self.locutus_settings.LOCUTUS_DICOM_SUMMARIZE_STATS_ENABLE_DB_UPDATES:
+        #BUT: the above ^^^ SUMMARIZE setting is not typically used for these De-ID modules (OnPrem DICOM, GCP DICOM, etc)
+        #AND: NOTE: that all calls to this preretire_change_statuts_only() are already wrapped
+        #   within an if LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION.
+        #STILL: is it worth considering a corresponding LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION_ENABLE_DB_UPDATES?
+        #   Saying Nope for now, since the one LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION
+        #   layer should suffix without an additional setting layer to really enable it.
+        #######
+        # NOTE: no corresponding Migrator setting to enable_db; just doing it!
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('{0}.preretire_change_status_only(): updating DB now.'.format(CLASS_PRINTNAME), flush=True)
+        self.LocutusDBconnSession.execute(update_sql)
+        #
+
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('{0}-- # END of {1}.preretire_change_status_only(change_seq_id=\'{2}\'):'.format(self.locutus_settings.SQL_OUT_PREFIX, CLASS_PRINTNAME, change_seq_id), flush=True)
+            print('{0}-- # -- -- -- -- -- -- -- --'.format(self.locutus_settings.SQL_OUT_PREFIX), flush=True)
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('VERBOSE {0}.preretire_change_status_only(): Goodbye.'.format(CLASS_PRINTNAME), flush=True)
 
 
     # TODO: combine Settings:retire_accession*() & De-ID:preretire_accession*()
     # incl their sub-methods, (pre)retire_accession_[status/manifest]_only()
     # for a single centralized set of methods to maintain:
-    def preretire_accession_manifest_only(self, accession_num):
+    def preretire_accession_manifest_only(self, accession_num, limit_to_batch=False):
         # helper method to update and retire ONLY the corresponding MANIFEST records for an accession_num
         # (keeping status record in place for cases where the current status record is valid and possibly mid-processing,
         #  but for which the manifest record has been changed in the meantime and only it needs updating...)
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
+
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('VERBOSE {0}.preretire_accession_manifest_only(): Hello! '\
+                    'for accession_num=\'{1}\' '\
+                    'w/ limit_to_batch={2} & local_batch_clause=\'{3}\'.'.format(
+                        CLASS_PRINTNAME,
+                        accession_num,
+                        local_batch_clause), flush=True)
 
         # BATCHES NOTE: now reference init's self.batch_clause rather than rebuilding it in multiple places:
         # DONE: consider removing batch_only & batch_name from this method's parameters, now that using self.batch_clause
 
         # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
         # and still setting the wacky accession-retirement math for backwards compatibility, while...
-        # BATCHES NOTE: limit to the current self.batch_clause????
+        # BATCHES NOTE: limit to the current self.batch_clause? ONLY if new limit_to_batch is set.
         self.LocutusDBconnSession.execute('UPDATE {0} '\
                                         'SET '\
                                         '    accession_num=concat(\'-\', accession_num), '\
@@ -2393,7 +2484,7 @@ class OnPrem_Dicom:
                                         '   AND active {2} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                         accession_num,
-                                        self.batch_clause))
+                                        local_batch_clause))
         # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
         # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
         # ===> USES update_manifest_record(active=False) to do so.
@@ -2402,37 +2493,29 @@ class OnPrem_Dicom:
         self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
                                                 src_modules.settings.DICOM_MODULE_ONPREM,
                                                 self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
-                                                self.batch_clause,
+                                                local_batch_clause,
                                                 curr_accession_num,
                                                 False,
                                                 interim_manifest_status,
                                                 new_subject_id=None)
-        # WAS:
-        """
-        # LOCUTUS_ALL_BATCHES_TABLE: and NOW, the actual retiring UPDATE:
-        # BATCHES NOTE: limit to the current self.batch_clause????
-        # TODO: create a corresponding Settings.retire_batch_record() to negate the accession_num:
-        self.LocutusDBconnSession.execute('UPDATE {0} '\
-                                        'SET accession_num=concat(\'-\',accession_num), '\
-                                        'active=False '\
-                                        'WHERE accession_num=\'{1}\' '\
-                                        'AND active {2} ;'.format(
-                                        self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE,
-                                        accession_num,
-                                        self.batch_clause))
-        """
 
 
-    def reset_accession_status_for_reprocessing(self, accession_num, new_subject_id, new_object_info_01, new_object_info_02, new_object_info_03):
+    def reset_accession_status_for_reprocessing(self, accession_num, new_subject_id, new_object_info_01, new_object_info_02, new_object_info_03, limit_to_batch=False):
+        # as from module_gcp_dicom.py:
         # helper method to reset the MANIFEST & STATUS records for an accession_num for reprocessing,
         # but only if already previousluy processed, at least partially;
         # allow all PENDING_CHANGE and PENDING_CHANGE_RADIOLOGY_MERGE to remain as they are.
         #################################
         # NOTE: COULD consider setting this method up general purpose enough to bring in both
-        # the savvy versions of the attribute updates for either:
+        # the OnPrem savvy versions of the attribute updates for either:
         #    OnPrem: subject_id, object_info_01, object_info_02, object_info_03, etc.
         # (much as done for the Summarizer and its various preloader () preset helper methods)
         #################################
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
 
         # TODO: add constants up top for all such statuses:
         REPROCESSING_CHANGE_MOMENTARILY="RE-PROCESSING_CHANGE_MOMENTARILY"
@@ -2444,12 +2527,15 @@ class OnPrem_Dicom:
                 'resetting  manifest_status=\'{1}\', phase_processed={2}, '\
                 'subject_id=\'{3}\', '\
                 'object_info_01=\'{4}\', object_info_02=\'{5}\', object_info_03=\'{6}\', '\
-                'for Accession# \'{7}\' ...'.format(
+                'for Accession# \'{7}\' '\
+                'with limit_to_batch={8} & local_batch_clause=\'{9}\' ...'.format(
                 CLASS_PRINTNAME,
                 new_manifest_status, new_phase_processed,
                 new_subject_id,
                 new_object_info_01, new_object_info_02, new_object_info_03,
-                accession_num),
+                accession_num,
+                limit_to_batch,
+                local_batch_clause),
                 flush=True)
 
         # ONLY UPDATE if manifest_status NOT LIKE %PENDING_CHANGE%:
@@ -2472,7 +2558,7 @@ class OnPrem_Dicom:
                                         new_object_info_01, new_object_info_02, new_object_info_03,
                                         accession_num,
                                         self.locutus_settings.MANIFEST_OUTPUT_STATUS_PENDING,
-                                        self.batch_clause))
+                                        local_batch_clause))
         # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
         # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
         # NOTE: this one WILL UPDATE that LOCUTUS_ALL_BATCHES_TABLE=AAA_LOCUTUS_BATCHES record EVEN IF  LIKE %PENDING_CHANGE%,
@@ -2482,7 +2568,7 @@ class OnPrem_Dicom:
         self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
                                                 src_modules.settings.DICOM_MODULE_ONPREM,
                                                 self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
-                                                self.batch_clause,
+                                                local_batch_clause,
                                                 accession_num,
                                                 True,
                                                 new_manifest_status,
@@ -2503,12 +2589,10 @@ class OnPrem_Dicom:
                                         new_subject_id,
                                         new_object_info_01, new_object_info_02, new_object_info_03,
                                         accession_num,
-                                        self.batch_clause))
+                                        local_batch_clause))
 
 
-    def reset_accession_phase_processed(self,
-                        accession_num,
-                        clear_deid_qc=True):
+    def reset_accession_phase_processed(self, accession_num, clear_deid_qc=True, limit_to_batch=False):
         # helper method to update ONLY the corresponding STATUS record for an accession_num,
         # and since a full reset back to phase_processed=MIN_PROCESSING_PHASE,
         # NO LONGER must also reset as_change_seq_id to NULL for the initial sweep to find it:
@@ -2518,6 +2602,23 @@ class OnPrem_Dicom:
             clear_deid_qc_cols = ',deid_qc_status=NULL, '\
                             'deid_qc_api_study_url=NULL, '\
                             'deid_qc_explorer_study_url=NULL '
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
+
+        if self.locutus_settings.LOCUTUS_VERBOSE:
+            print('{0}.Process().reset_accession_phase_processed(): '\
+                'resetting Accession# \'{1}\' and clear_deid_qc={2} '\
+                'with limit_to_batch={3} & local_batch_clause=\'{4}\' ...'.format(
+                CLASS_PRINTNAME,
+                accession_num,
+                clear_deid_qc,
+                limit_to_batch,
+                local_batch_clause),
+                flush=True)
+
         # BATCHES NOTE: limit to the current self.batch_clause:
         # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
         # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
@@ -2529,16 +2630,20 @@ class OnPrem_Dicom:
                                         MIN_PROCESSING_PHASE,
                                         clear_deid_qc_cols,
                                         accession_num,
-                                        self.batch_clause))
+                                        local_batch_clause))
 
 
-    def set_accession_phase_processed(self,
-                        accession_num,
-                        phase_processed):
+    def set_accession_phase_processed(self, accession_num, phase_processed, limit_to_batch=True):
         # helper method to update ONLY the corresponding STATUS record for an accession_num:
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
+
         if phase_processed <= MIN_PROCESSING_PHASE:
             # be sure to use the proper reset method:
-            self.reset_accession_phase_processed(accession_num)
+            self.reset_accession_phase_processed(accession_num, limit_to_batch=limit_to_batch)
         else:
             # BATCHES NOTE: limit to the current self.batch_clause:
             # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
@@ -2549,13 +2654,17 @@ class OnPrem_Dicom:
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         phase_processed,
                                         accession_num,
-                                        self.batch_clause))
+                                        local_batch_clause))
 
 
-    def set_accession_phase_processed_to_greatest(self,
-                        accession_num,
-                        great_test_phase_processed):
+    def set_accession_phase_processed_to_greatest(self, accession_num, great_test_phase_processed, limit_to_batch=True):
         # helper method to update ONLY the corresponding STATUS record for an accession_num:
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
+
         # BATCHES NOTE: limit to the current self.batch_clause:
         # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
         # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
@@ -2565,7 +2674,7 @@ class OnPrem_Dicom:
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         great_test_phase_processed,
                                         accession_num,
-                                        self.batch_clause))
+                                        local_batch_clause))
 
     ##############################################################################
     # TODO: combine Settings:retire_accession*() & De-ID:preretire_accession*()
@@ -2574,23 +2683,28 @@ class OnPrem_Dicom:
     # NOTE: that unline the full Summarizer:retire_accession(), this De-ID:preretire_accession()
     # does NOT do a full retire of its STATUS record, nor preretire_change_status_only():
     ##############################################################################
-    def preretire_accession(self, accession_num):
+    def preretire_accession(self, accession_num, limit_to_batch=True):
         # helper method to update and retire ALL corresponding MANIFEST and STATUS records for an accession_num:
         # DONE: consider removing batch_only & batch_name from this method's parameters, now that using self.batch_clause
-        self.preretire_accession_manifest_only(accession_num)
-        self.reset_accession_phase_processed(accession_num)
+        self.preretire_accession_manifest_only(accession_num, limit_to_batch=limit_to_batch)
+        self.reset_accession_phase_processed(accession_num, limit_to_batch=limit_to_batch)
 
 
-    def predelete_accession(self,
-                            accession_num):
+    def predelete_accession(self, accession_num, limit_to_batch=True):
         # helper method to update and delete corresponding records for an accession_num:
+
+        local_batch_clause = ''
+        if limit_to_batch:
+            local_batch_clause = self.batch_clause
+        # else, unlimited, spanning all batches.
+
         # BATCHES NOTE: limit to the current self.batch_clause:
         self.LocutusDBconnSession.execute('DELETE FROM {0} '\
                                         'WHERE accession_num=\'{1}\' '\
                                         '    AND active {2} ;'.format(
                                         LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                         accession_num,
-                                        self.batch_clause))
+                                        local_batch_clause))
         # BATCHES NOTE: limit to the current self.batch_clause:
         # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
         # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
@@ -2600,7 +2714,7 @@ class OnPrem_Dicom:
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                         MIN_PROCESSING_PHASE,
                                         accession_num,
-                                        self.batch_clause))
+                                        local_batch_clause))
 
 
     def Setup_Input_Manifest(self, run_iteration_num):
@@ -3401,7 +3515,8 @@ class OnPrem_Dicom:
         self.LocutusDBconn = LocutusDBengine.connect()
         Session = sessionmaker(bind=self.LocutusDBconn, autocommit=True)
         self.LocutusDBconnSession = Session()
-        # NOTE: for preventing unexpected timeouts, then....
+        # NOTE: since the above new LocutusDBconnSession approach works in other modules
+        # for preventing unexpected timeouts, then....
         # introducing this to the other Locutus modules as well (such as this!),
         # TODO: somebody complete with all the .close() calls, as paired with manifest_infiile.close(), wherever clever.
         #####
@@ -4054,7 +4169,7 @@ class OnPrem_Dicom:
                     #######################
                     # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                     # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                    # NOTE: this is in the DICOM De-ID modules
+                    # NOTE: this is in all DICOM De-ID modules
                     #######################
                     # at least save some bits from the last exception into status:
                     safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -4527,6 +4642,8 @@ class OnPrem_Dicom:
                     errors_message2return += 'ERROR_PHASE04=[dicom_anon returned non-zero error code of {0}]'.format(proc.returncode)
 
                     ##### ##### ##### ##### #####
+                    # DEV NOTE:
+                    # code block #1 of such FORCE_SUCCESS:
                     # TODO: read through and test this, then add other such FORCE_SUCCESS blocks
                     ##### ##### ##### ##### #####
                     # TODO: test on an accession with a legitimate dicom_anon Unexpected Value error.
@@ -4976,7 +5093,7 @@ class OnPrem_Dicom:
                     #######################
                     # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                     # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                    # NOTE: this is in the DICOM De-ID modules
+                    # NOTE: this is in all DICOM De-ID modules
                     #######################
                     # at least save some bits from the last exception into status:
                     safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -5460,7 +5577,7 @@ class OnPrem_Dicom:
                     #######################
                     # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                     # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                    # NOTE: this is in the DICOM De-ID modules
+                    # NOTE: this is in all DICOM De-ID modules
                     #######################
                     # at least save some bits from the last exception into status:
                     safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -5960,8 +6077,9 @@ class OnPrem_Dicom:
                     flush=True)
             self.locutus_settings.LOCUTUS_DICOM_BYPASS_MIGRATION = True
         else:
-            print('{0}.Process(): PHASE01: INFO: Absolutely NO ({1}) unanticipated Staged accessions found with active=NULL; leaving LOCUTUS_DICOM_BYPASS_MIGRATION as is, YAY.'.format(
-                    CLASS_PRINTNAME, num_null_active_staged),
+            print('{0}.Process(): PHASE01: INFO: Absolutely NO ({1}) unanticipated Staged accessions found with active=NULL; '\
+                    'leaving LOCUTUS_DICOM_BYPASS_MIGRATION as is ({2}), YAY.'.format(
+                    CLASS_PRINTNAME, num_null_active_staged, self.locutus_settings.LOCUTUS_DICOM_BYPASS_MIGRATION),
                     flush=True)
         # emit the Phase01 MIGRATION STATS:
         print('{0},# Phase01,NUM_STAGED_WITH_NULL_ACTIVE_TO_RESOLVE:,{1},from,{2}'.format(
@@ -5981,6 +6099,8 @@ class OnPrem_Dicom:
                     CLASS_PRINTNAME),
                     flush=True)
         else:
+            ################################################# ################################################# #################################################
+            # START OF else: # Processing Phase01a: pre-Migration, part of it in regards to LOCUTUS_DICOM_BYPASS_MIGRATION
             # Processing Phase01a: pre-Migration, part of it in regards to LOCUTUS_DICOM_BYPASS_MIGRATION
             ###########################################################
             # load up lists of all change_seq_ids in: LOCUTUS_ONPREM_DICOM_STATUS_TABLE
@@ -6135,6 +6255,27 @@ class OnPrem_Dicom:
                         # (see below. at: "if status_num_accession_other_changes")
                         ###
                         # BATCHES NOTE: DISTINCT() eliminates need for self.batch_clause, since *should* be same across all batches:
+                        preupdate_sql_select='SELECT DISTINCT(accession_num) FROM {0} '\
+                                            'WHERE active '\
+                                            'AND change_seq_id = {1} ;'.format(
+                                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                                            curr_zombie_change_seq_id)
+
+                        if self.locutus_settings.LOCUTUS_VERBOSE:
+                            print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, LOCUTUS_ONPREM_DICOM_STATUS_TABLE), flush=True)
+                            print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select), flush=True)
+                        ###################
+                        # DO IT! Go ahead and actually execute that preupdate_sql_select
+                        # in order to preserve those values in the output log (as well as in the retired accessions)
+                        preupdate_sql_select_results =  self.LocutusDBconnSession.execute(preupdate_sql_select)
+                        for preupdate_sql_select_result in preupdate_sql_select_results.fetchall():
+                            if self.locutus_settings.LOCUTUS_VERBOSE:
+                                print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select_result), flush=True)
+                        ###################
+                        if self.locutus_settings.LOCUTUS_VERBOSE:
+                            print('{0}-- #'.format(self.locutus_settings.SQL_OUT_PREFIX), flush=True)
+                        # and NOW, the actual UPDATE (or in this case, just a query):
+
                         status_change_accession_result =  self.LocutusDBconnSession.execute('SELECT DISTINCT(accession_num) FROM {0} '\
                                             'WHERE active '\
                                             'AND change_seq_id = {1} ;'.format(
@@ -6142,6 +6283,30 @@ class OnPrem_Dicom:
                                             curr_zombie_change_seq_id))
                         status_change_accession_result_row = status_change_accession_result.fetchone()
                         status_change_accession_num = status_change_accession_result_row['accession_num']
+
+                        # BATCHES NOTE: DISTINCT() eliminates need for self.batch_clause, since *should* be same across all batches:
+                        preupdate_sql_select='SELECT COUNT(DISTINCT(change_seq_id)) as num_other_changes FROM {0} '\
+                                            'WHERE active '\
+                                            'AND accession_num = \'{1}\' '\
+                                            'AND change_seq_id != {2} ;'.format(
+                                            LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
+                                            status_change_accession_num,
+                                            curr_zombie_change_seq_id)
+                        if self.locutus_settings.LOCUTUS_VERBOSE:
+                            print('{0}-- # DB=Locutus, Table={1}'.format(self.locutus_settings.SQL_OUT_PREFIX, LOCUTUS_ONPREM_DICOM_STATUS_TABLE), flush=True)
+                            print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select), flush=True)
+                        ###################
+                        # DO IT! Go ahead and actually execute that preupdate_sql_select
+                        # in order to preserve those values in the output log (as well as in the retired accessions)
+                        preupdate_sql_select_results =  self.LocutusDBconnSession.execute(preupdate_sql_select)
+                        for preupdate_sql_select_result in preupdate_sql_select_results.fetchall():
+                            if self.locutus_settings.LOCUTUS_VERBOSE:
+                                print('{0}-- # {1}'.format(self.locutus_settings.SQL_OUT_PREFIX, preupdate_sql_select_result), flush=True)
+                        ###################
+                        if self.locutus_settings.LOCUTUS_VERBOSE:
+                            print('{0}-- #'.format(self.locutus_settings.SQL_OUT_PREFIX), flush=True)
+                        # and NOW, the actual UPDATE (or in this case, just a query):
+
                         ###
                         # BATCHES NOTE: limit to the current self.batch_clause???
                         # NOPE, adding DISTINCT():
@@ -6149,62 +6314,136 @@ class OnPrem_Dicom:
                         status_num_accession_other_changes_result =  self.LocutusDBconnSession.execute('SELECT COUNT(DISTINCT(change_seq_id)) as num_other_changes FROM {0} '\
                                             'WHERE active '\
                                             'AND accession_num = \'{1}\' '\
-                                            'AND change_seq_id != {2} {3};'.format(
+                                            'AND change_seq_id != {2} ;'.format(
                                             LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                             status_change_accession_num,
-                                            curr_zombie_change_seq_id,
-                                            self.batch_clause))
+                                            curr_zombie_change_seq_id))
                         status_num_accession_other_changes_result_row = status_num_accession_other_changes_result.fetchone()
                         status_num_accession_other_changes = status_num_accession_other_changes_result_row['num_other_changes']
                         ######################
 
-                        self.preretire_change_status_only(curr_zombie_change_seq_id)
+                        # NOTE: as only when LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION is enabled:
+                        if self.locutus_settings.LOCUTUS_VERBOSE:
+                            print('{0}.Process() ====> ABOUT TO CALL self.preretire_change_status_only(curr_zombie_change_seq_id={1})'.format(CLASS_PRINTNAME, curr_zombie_change_seq_id), flush=True)
+                        self.preretire_change_status_only(curr_zombie_change_seq_id, limit_to_batch=False)
+                        if self.locutus_settings.LOCUTUS_VERBOSE:
+                            print('{0}.Process() ====> DONE WITH self.preretire_change_status_only(curr_zombie_change_seq_id={1})'.format(CLASS_PRINTNAME, curr_zombie_change_seq_id), flush=True)
 
                         if status_num_accession_other_changes < 1:
-                            # if NO other changes for this accession, then update the MANIFEST and BATCHES tables
+                            # since NO other changes for this accession, update the MANIFEST and BATCHES tables
                             # across ALL batches within that workspace MANIFEST / global BATCHES table
+                            # regardless of its batch_name
 
+                            ##########
                             # TODO: if potentially used elsewhere, create the following constant in Settings, etc.:
                             # NOTE: this is NOT "retiring" (per se) either the MANIFEST or BATCHES records,
-                            # merely noting of their removal by the Migrator in case Summarized prior to another Preloader run:
-                            migrator_removed_status = 'MIGRATOR_REMOVED_ZOMBIE_PLEASE_RERUN_PRELOADER_TO_REFRESH'
+                            #   merely noting of their removal by the Migrator in case Summarized prior to another Preloader run:
+                            ##########
+                            migrator_removed_status = 'MIGRATOR_REMOVED_ZOMBIES_likely_RESOLVED_elsewhere_PLEASE_Re-Preload'
+                            ##########
+                            # NOTE: Hat-tip to "Philly's own".... The Hooters, and their break-out hit, All You Zombies:
+                            #       All you zombies hide your faces,
+                            #           all you people in the street;
+                            #       All you sittin' in high places,
+                            #           the pieces gonna fall on you
+                            ##########
 
-                            # first, update the Zombie'd manifest_status for this workspace's MANIFEST table:
-                            # BATCHES NOTE: doing so across ALL batches in the workspace????
-                            # BATCHES NOTE: limit to the current self.batch_clause:
+                            if self.locutus_settings.LOCUTUS_VERBOSE:
+                                print('r3m0 DEBUG: =====> status_change_accession_num \'{0}\' default migrator_removed_status NOW == \'{1}\' , so UPDATING its MANIFEST record AND its AAA_LOCUTUS_BATCHES record.'.format(
+                                    status_change_accession_num, migrator_removed_status), flush=True)
+
+                            # BATCHES NOTE: update across ALL batches in this workspace, unlimited by any current self.batch_clause,
+                            # But..... split this into two parts:
+                            #
+                            # PART 1: only for those accessions existing with manifest_status NOT LIKE 'PROCESSED%'
+                            #       PART 1a) for the Workspace MANIFEST TABLE
+                            #       PART 1b) for the general AAA_LOCUTUS_BATCHES table
+                            #
+                            # PART 2: only for those accessions existing with manifest_status == 'PROCESSED'
+                            #   NOTE: leaving any other LIKE 'PROCESSED%' (e.g., PROCESSED_THEN_*) as is, since already extended
+                            #       PART 2a) for the Workspace MANIFEST TABLE
+                            #       PART 2b) for the general AAA_LOCUTUS_BATCHES table
+                            #
+                            # DEV NOTE: as below, CONSIDER moving MANIFEST UPDATES into a new Settings:update_manifest_record() method.
+                            # BUT: would need additional flexiibility for the various selectable PROCESSED clauses.
+
+                            ############################################################################
+                            # MANIFEST UPDATE
+                            # PART 1: only for those accessions existing with manifest_status NOT LIKE 'PROCESSED%'
+                            #   PART 1a) for the Workspace MANIFEST TABLE
+                            ############################################################################
+
                             self.LocutusDBconnSession.execute('UPDATE {0} '\
                                             'SET manifest_status=\'{1}\' '\
                                             'WHERE accession_num=\'{2}\' '\
-                                            '    AND active {3} ;'.format(
+                                            '    AND manifest_status NOT LIKE \'PROCESSED%\' '\
+                                            '    AND active ;'.format(
                                             LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                             migrator_removed_status,
-                                            status_change_accession_num,
-                                            self.batch_clause))
-                            # TOOD: as below, move ^^^ above MANIFEST UPDATE into a new Settings:update_manifest_record() method.
-                            # BATCHES NOTE: the above MANIFEST UPDATE warrants a corresponding update to LOCUTUS_ALL_BATCHES_TABLE:
-                            # BUT: NOTE: already done below, across ALL batches, leaving as is
-                            """ NOT YET:
-                            self.locutus_settings.update_batches_table(self.LocutusDBconnSession,
-                                                src_modules.settings.DICOM_MODULE_ONPREM,
-                                                self.locutus_settings.LOCUTUS_WORKSPACE_NAME,
-                                                self.batch_clause,
-                                                status_change_accession_num,
-                                                True,
-                                                migrator_removed_status,
-                                                new_subject_id=None)
-                            """
-                            # and then, the Zombie'd manifest_status for the global Locutus BATCHES table:
-                            # BATCHES NOTE: doing so across ALL batches in the workspace????
-                            # BATCHES NOTE: limit to the current self.batch_clause:
-                            # r3m0:TODO: ===> USE the new method, to also ensure Workspace & Module are added
+                                            status_change_accession_num))
+
+                            ############################################################################
+                            # MANIFEST UPDATE
+                            # PART 1: only for those accessions existing with manifest_status NOT LIKE 'PROCESSED%'
+                            #   PART 1b) for the general AAA_LOCUTUS_BATCHES table
+                            ############################################################################
+
                             self.LocutusDBconnSession.execute('UPDATE {0} '\
                                             'SET manifest_status=\'{1}\' '\
                                             'WHERE accession_num=\'{2}\' '\
-                                            '    AND active {3} ;'.format(
+                                            '    AND module=\'{3}\' '\
+                                            '    AND workspace=\'{4}\' '\
+                                            '    AND manifest_status NOT LIKE \'PROCESSED%\' '\
+                                            '    AND active ;'.format(
                                             self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE,
                                             migrator_removed_status,
                                             status_change_accession_num,
-                                            self.batch_clause))
+                                            src_modules.settings.DICOM_MODULE_ONPREM,
+                                            self.locutus_settings.LOCUTUS_WORKSPACE_NAME))
+
+                            ############################################################################
+                            # MANIFEST UPDATE
+                            # PART 2: only for those accessions existing with manifest_status == 'PROCESSED'
+                            #   PART 2a) for the Workspace MANIFEST TABLE
+                            # NOTE: leaving any other LIKE 'PROCESSED%' (e.g., PROCESSED_THEN_*) as is, since already extended
+                            ############################################################################
+
+                            migrator_removed_processed_status = 'PROCESSED_THEN_' + migrator_removed_status
+
+                            self.LocutusDBconnSession.execute('UPDATE {0} '\
+                                            'SET manifest_status=\'{1}\' '\
+                                            'WHERE accession_num=\'{2}\' '\
+                                            '    AND manifest_status=\'PROCESSED\' '\
+                                            '    AND active ;'.format(
+                                            LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
+                                            migrator_removed_processed_status,
+                                            status_change_accession_num))
+
+                            ############################################################################
+                            # MANIFEST UPDATE
+                            # PART 2: only for those accessions existing with manifest_status == 'PROCESSED'
+                            #   PART 2b) for the general AAA_LOCUTUS_BATCHES table
+                            # NOTE: leaving any other LIKE 'PROCESSED%' (e.g., PROCESSED_THEN_*) as is, since already extended
+                            ############################################################################
+
+                            self.LocutusDBconnSession.execute('UPDATE {0} '\
+                                            'SET manifest_status=\'{1}\' '\
+                                            'WHERE accession_num=\'{2}\' '\
+                                            '    AND module=\'{3}\' '\
+                                            '    AND workspace=\'{4}\' '\
+                                            '    AND manifest_status=\'PROCESSED\' '\
+                                            '    AND active ;'.format(
+                                            self.locutus_settings.LOCUTUS_ALL_BATCHES_TABLE,
+                                            migrator_removed_processed_status,
+                                            status_change_accession_num,
+                                            src_modules.settings.DICOM_MODULE_ONPREM,
+                                            self.locutus_settings.LOCUTUS_WORKSPACE_NAME))
+
+                        else:
+                            if self.locutus_settings.LOCUTUS_VERBOSE:
+                                print('r3m0 DEBUG: =====> status_change_accession_num \'{0}\' found status_num_accession_other_changes={1} >=1, so... '\
+                                    'NOT UPDATING its MANIFEST record AND its AAA_LOCUTUS_BATCHES record to a status of: \'MIGRATOR_REMOVED_ZOMBIE_PLEASE_RERUN_PRELOADER_TO_REFRESH\'.'.format(
+                                    status_change_accession_num, status_num_accession_other_changes), flush=True)
 
                         total_positive_zombie_changes_removed += 1
 
@@ -6289,15 +6528,14 @@ class OnPrem_Dicom:
                     # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                     # lest previously (as above) retired versions of this trigger false multiples:
                     # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
-                    # BATCHES NOTE: limit to the current self.batch_clause???
+                    # BATCHES NOTE: do not include any self.batch_clause here in Migrator, allow it to span all.
                     self.LocutusDBconnSession.execute('DELETE FROM {0} '\
                                                 'WHERE uuid=\'{1}\' '\
-                                                '    AND active {3} '\
+                                                '    AND active '\
                                                 'AND change_seq_id < {2} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                 curr_xtra_change_uuid,
-                                                curr_xtra_max_changeseqid,
-                                                self.batch_clause))
+                                                curr_xtra_max_changeseqid))
                     total_xtra_changes_removed += curr_xtra_change_num_changes-1
 
                 print('{0}.Process(): PHASE01b-01: pre-Migration cleared '\
@@ -6357,7 +6595,7 @@ class OnPrem_Dicom:
             changes_needing_migrating_list = [item for item in staged_changes_list if item not in status_changes_list]
 
             if self.locutus_settings.LOCUTUS_VERBOSE:
-                print('{0}.Process(): PHASE02: change ids needing migrating == {1}'.format(
+                print('{0}.Process(): PHASE02: change ids needing migrating into the default NULL-named batch == {1}'.format(
                             CLASS_PRINTNAME,
                             changes_needing_migrating_list),
                             flush=True)
@@ -6410,8 +6648,8 @@ class OnPrem_Dicom:
                 test_msg = ""
                 if self.locutus_settings.LOCUTUS_TEST:
                     test_msg = " TEST MODE: not actually"
-                print('{0}.Process(): PHASE02:{1} migrating new change {2} with uuid {3} '\
-                        'into the current Locutus OnPrem workspace status table ({4})'.format(
+                print('{0}.Process(): PHASE02:{1} migrating new (to the default NULL-named batch) change {2} with uuid {3} '\
+                        'into the current Locutus OnPrem workspace status table ({4}) as a NULL-batch'.format(
                                             CLASS_PRINTNAME,
                                             test_msg,
                                             staged_change,
@@ -6438,15 +6676,16 @@ class OnPrem_Dicom:
                     # lest previously (as above) retired versions of this trigger false multiples:
                     # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
                     # BATCHES NOTE: limit to the current self.batch_clause:
+                    # BATCHES NOTE: even if a batch_name has been specified, only migrate into the default NULL-named batch:
                     existing_changes_for_uuid_result =  self.LocutusDBconnSession.execute('SELECT '\
                                         'count(distinct(change_seq_id)) as num_changes, '\
                                         'max(distinct(change_seq_id)) as max_changeseqid '\
                                         'FROM {0} '\
                                         'WHERE uuid=\'{1}\' '\
-                                        '    AND active {2} ;'.format(
+                                        'AND batch_name IS NULL '\
+                                        '    AND active ;'.format(
                                         LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
-                                        staged_uuid,
-                                        self.batch_clause))
+                                        staged_uuid))
                     existing_changes_for_uuid_row = existing_changes_for_uuid_result.fetchone()
                     num_locutus_changes_for_uuid = existing_changes_for_uuid_row['num_changes']
                     max_locutus_changeseqid_for_uuid = existing_changes_for_uuid_row['max_changeseqid']
@@ -6456,10 +6695,12 @@ class OnPrem_Dicom:
                         if num_locutus_changes_for_uuid > 1:
 
                             # emit a WARNING that these should not be encountered anymore ONCE self.locutus_settings.LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION:
-                            print('{0}.Process(): WARNING: PHASE01b-02-A: unexpectedly encountered; '\
+                            print('{0}.Process(): WARNING: PHASE01b-02-A: unexpectedly encountered '\
+                                        'num_locutus_changes_for_uuid={1} (>1); '\
                                         'all should be cleared out by now ONCE deployed '\
                                         'with LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION.'.format(
-                                        CLASS_PRINTNAME),
+                                        CLASS_PRINTNAME,
+                                        num_locutus_changes_for_uuid),
                                         flush=True)
 
                             # delete all change_seq_id for this uuid EXCEPT max_locutus_changeseqid_for_uuid:
@@ -6468,19 +6709,18 @@ class OnPrem_Dicom:
                             # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                             # lest previously (as above) retired versions of this trigger false multiples:
                             # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
-                            # BATCHES NOTE: limit to the current self.batch_clause???
+                            # BATCHES NOTE: do not include any self.batch_clause here in Migrator, allow it to span all.
                             if self.locutus_settings.LOCUTUS_VERBOSE:
                                 print('{0}.Process(): PHASE01b02: about to remove any existing outstanding '\
                                     'Stager STABLESTUDY changes for an EXISTING uuid in '\
                                     'the current Locutus OnPrem workspace status table ({1}) via DELETE : ' \
                                     'WHERE uuid=\'{2}\' '\
-                                    '    AND active {4} '\
+                                    '    AND active '\
                                     'AND change_seq_id < {3} ;'.format(
                                     CLASS_PRINTNAME,
                                     LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                     staged_uuid,
-                                    staged_change,
-                                    self.batch_clause))
+                                    staged_change))
 
                             if not self.locutus_settings.LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION:
                                 print('{0}.Process(): WARNING: PHASE01b-02-A: per-UUID Migration requires '\
@@ -6516,15 +6756,15 @@ class OnPrem_Dicom:
                                 # lest previously (as above) retired versions of this trigger false multiples:
                                 # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
                                 #####
-                                # BATCHES NOTE: limit to the current self.batch_clause???
+                                # BATCHES NOTE: even if a batch_name has been specified, only migrate into the default NULL-named batch:
+                                # BATCHES NOTE: do not include any self.batch_clause here in Migrator, allow it to span all.
                                 self.LocutusDBconnSession.execute('DELETE FROM {0} '\
                                                 'WHERE uuid=\'{1}\' '\
-                                                '    AND active {3} '\
+                                                '    AND active '\
                                                 'AND change_seq_id < {2} ;'.format(
                                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                                 staged_uuid,
-                                                max_locutus_changeseqid_for_uuid,
-                                                self.batch_clause))
+                                                max_locutus_changeseqid_for_uuid))
                                 total_xtra_changes_removed += total_xtra_changes_removed-1
 
                         # THEN UPDATE the existing STATUS record, merely bumping its change_seq_id to the latest and greatest
@@ -6534,83 +6774,79 @@ class OnPrem_Dicom:
                         # lest previously (as above) retired versions of this trigger false multiples:
                         # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
                         # BATCHES NOTE: limit to the current self.batch_clause:
+                        # BATCHES NOTE: even if a batch_name has been specified, only migrate into the default NULL-named batch:
                         if self.locutus_settings.LOCUTUS_VERBOSE:
                             print('{0}.Process(): PHASE02: about to migrate outstanding '\
                                 'Stager STABLESTUDY changes for an EXISTING uuid in '\
                                 'the current Locutus OnPrem workspace status table ({1}) via UPDATE of: ' \
                                 'SET change_seq_id={2} '\
                                 'WHERE uuid=\'{3}\' '\
-                                '   AND active {4} ;'.format(
+                                '   AND active ;'.format(
                                 CLASS_PRINTNAME,
                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                 staged_change,
-                                staged_uuid,
-                                self.batch_clause))
+                                staged_uuid))
                         #####
                         # NOTE: ensuring that this is only pulling the info for ACTIVE uuids
                         # (i.e., non-retired, w/ POSITION(\'-\' IN accession_num) = 0 & change_seq_id > 0)
                         # lest previously (as above) retired versions of this trigger false multiples:
                         # NOTE: with Juneteenth 2025 alphanumeric upgrade comes the new active flag:
-                        # BATCHES NOTE: limit to the current self.batch_clause:
                         # BATCHES NOTE: STATUS UPDATE need no parallel UPDATE into LOCUTUS_ALL_BATCHES_TABLE.
                         # TOOD: as w/ MANIFEST UPDATE, move VVV below STATUS UPDATE into a new Settings:update_status_record() method (and likewise for INSERTs).
+                        # BATCHES NOTE: even if a batch_name has been specified, only migrate into the default NULL-named batch:
                         self.LocutusDBconnSession.execute('UPDATE {0} SET change_seq_id={1} '\
                                             'WHERE uuid=\'{2}\' '\
-                                            '   AND active {3} ;'.format(
+                                            '   AND active ;'.format(
                                             LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                             staged_change,
-                                            staged_uuid,
-                                            self.batch_clause))
+                                            staged_uuid))
                     else:
                         # NOTE: no need for accession_num_src FOLLOWING the alpha-numeric upgrade of Juneteenth 2025, in which accession_num_src might have been used to detect any previous SPLITS....
                         # BATCHES NOTE: INSERT w/ self.batch_insert_update_val:
                         if self.locutus_settings.LOCUTUS_VERBOSE:
                             # NOTE: leave batch_insert_update_val as UNQUOTED, since it could be NULL or a quoted string:
                             print('{0}.Process(): PHASE02: about to migrate outstanding '\
-                                'Stager STABLESTUDY changes for a NEW uuid to '\
-                                'the current Locutus OnPrem workspace STATUS table ({1}) via INSERT of: ' \
+                                'Stager STABLESTUDY changes for a NEW (to the default NULL-named batch) uuid to '\
+                                'the current Locutus OnPrem workspace STATUS table ({1}) as a NULL-batch via INSERT of: ' \
                                 '(change_seq_id, '\
                                 'change_type, uuid, '\
                                 'accession_num, '\
                                 'active, '\
                                 'phase_processed, '\
-                                'batch_name) '\
+                                'batch_name ) '\
                                 'VALUES( {2}, "{3}", "{4}", '\
                                 '\'{5}\', '\
                                 'True, '\
-                                '{6}, '\
-                                '{7} )'.format(
+                                '{6}, NULL )'.format(
                                 CLASS_PRINTNAME,
                                 LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                 staged_change,
                                 staged_change_type,
                                 staged_uuid,
                                 staged_accession_num,
-                                MIN_PROCESSING_PHASE,
-                                self.batch_insert_update_val))
+                                MIN_PROCESSING_PHASE))
                         # BATCHES NOTE: INSERT w/ self.batch_insert_update_val:
                         # BATCHES NOTE: STATUS INSERTS need no parallel INSERT into LOCUTUS_ALL_BATCHES_TABLE.
                         # TOOD: move VVV below STATUS INSERT into a new Settings:insert_status_record() method (and likewise for UPDATEs).
                         # NOTE: leave batch_insert_update_val as UNQUOTED, since it could be NULL or a quoted string:
+                        # BATCHES NOTE: even if a batch_name has been specified, only migrate into the default NULL-named batch:
                         self.LocutusDBconnSession.execute('INSERT INTO {0} ('\
                                             'change_seq_id, '\
                                             'change_type, uuid, '\
                                             'accession_num, '\
                                             'active, '\
                                             'phase_processed, '\
-                                            'batch_name) '\
+                                            'batch_name ) '\
                                             'VALUES({1}, \'{2}\', \'{3}\', '\
                                             '\'{4}\', '\
                                             'True, '\
-                                            '{5}, '\
-                                            '{6} ) ;'.format(
+                                            '{5}, NULL ) ;'.format(
                                             LOCUTUS_ONPREM_DICOM_STATUS_TABLE,
                                             staged_change,
                                             staged_change_type,
                                             staged_uuid,
                                             staged_accession_num,
-                                            MIN_PROCESSING_PHASE,
-                                            self.batch_insert_update_val))
+                                            MIN_PROCESSING_PHASE))
                     num_changes_migrated_in_Phase02 += 1
 
             if not self.locutus_settings.LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION:
@@ -6668,6 +6904,8 @@ class OnPrem_Dicom:
                         flush=True)
             print('{0}.Process(): END of PHASE02: phase processing complete for this batch.'.format(CLASS_PRINTNAME), flush=True)
             print('{0}.Process(): -------------------------------------'.format(CLASS_PRINTNAME), flush=True)
+            # END OF else: # Processing Phase01a: pre-Migration, part of it in regards to LOCUTUS_DICOM_BYPASS_MIGRATION
+            ################################################# ################################################# #################################################
 
         #################################################
         # Pre-Processing BookKeeping for Phase03:
@@ -6967,7 +7205,7 @@ class OnPrem_Dicom:
                         # Now, allowing that reset regardless, to better support LOCUTUS_ALL_BATCHES_TABLE
                         # through its more generic Settings.update_batches_table().
                         # NOTE: just be sure to UPDATE LATER once the PENDING_CHANGE manifest_status *is* found to be.
-                        self.reset_accession_status_for_reprocessing(safe_acc_num_str, curr_subject_id, curr_object_info_01, curr_object_info_02, curr_object_info_03)
+                        self.reset_accession_status_for_reprocessing(safe_acc_num_str, curr_subject_id, curr_object_info_01, curr_object_info_02, curr_object_info_03, limit_to_batch=True)
                     elif self.locutus_settings.LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS:
                         # print about the LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS regardless of VERBOSE:
                         print('{0}.Process(): PHASE03: WARNING: LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS '\
@@ -6975,7 +7213,7 @@ class OnPrem_Dicom:
                                     CLASS_PRINTNAME,
                                     safe_acc_num_str),
                                     flush=True)
-                        self.predelete_accession(safe_acc_num_str)
+                        self.predelete_accession(safe_acc_num_str, limit_to_batch=True)
                     elif (self.locutus_settings.LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS \
                         and not self.locutus_settings.LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS_ONLY_CHANGED):
                         # print about the LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS regardless of VERBOSE:
@@ -6987,7 +7225,7 @@ class OnPrem_Dicom:
                                     LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE,
                                     safe_acc_num_str),
                                     flush=True)
-                        self.preretire_accession(safe_acc_num_str)
+                        self.preretire_accession(safe_acc_num_str, limit_to_batch=True)
 
 
                     # NOTE: LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE  currently designed to have but a single entry
@@ -7183,7 +7421,7 @@ class OnPrem_Dicom:
                                             DEIDENTIFIED_PHASE,
                                             safe_acc_num_str),
                                             flush=True)
-                                    self.set_accession_phase_processed_to_greatest(safe_acc_num_str, DEIDENTIFIED_PHASE)
+                                    self.set_accession_phase_processed_to_greatest(safe_acc_num_str, DEIDENTIFIED_PHASE, limit_to_batch=True)
                                 elif ((manifest_status_prev_status.find('FAIL:') == 0) \
                                     and ( \
                                         (
@@ -7217,7 +7455,7 @@ class OnPrem_Dicom:
                                             curr_deid_qc_status,
                                             safe_acc_num_str),
                                             flush=True)
-                                    self.set_accession_phase_processed(safe_acc_num_str, DEIDENTIFIED_PHASE)
+                                    self.set_accession_phase_processed(safe_acc_num_str, DEIDENTIFIED_PHASE, limit_to_batch=True)
                                 elif ((manifest_status_prev_status.find('FAIL:') == 0) \
                                     and ( \
                                             (self.locutus_settings.LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS_IF_FAIL_REMOVE_STUDY_FROM_DEIDQC \
@@ -7314,7 +7552,7 @@ class OnPrem_Dicom:
                                             safe_acc_num_str),
                                             flush=True)
 
-                                self.set_accession_phase_processed(safe_acc_num_str, FAILED_PROCESSING_PHASE)
+                                self.set_accession_phase_processed(safe_acc_num_str, FAILED_PROCESSING_PHASE, limit_to_batch=True)
 
                                 if not self.locutus_settings.LOCUTUS_ONPREM_DICOM_USE_MANIFEST_QC_STATUS_IF_FAIL_REMOVE_STUDY_FROM_DEIDQC:
                                     # print regardless of VERBOSE:
@@ -7520,7 +7758,7 @@ class OnPrem_Dicom:
                                                     self.batch_clause))
 
                             if delay_reset_accession:
-                                self.reset_accession_phase_processed(safe_acc_num_str, clear_deid_qc=delay_reset_accession_clear_deid_qc)
+                                self.reset_accession_phase_processed(safe_acc_num_str, clear_deid_qc=delay_reset_accession_clear_deid_qc, limit_to_batch=True)
 
                                 # NOTE: as COPIED from end of Phase05,
                                 # overall LOCUTUS_ONPREM_DICOM_MANIFEST_TABLE update of manifest_status='PROCESSED'
@@ -8163,7 +8401,7 @@ class OnPrem_Dicom:
                                                     safe_acc_num_str),
                                                     flush=True)
                                         # general-purpose full preretirement for those accessions already previously processed fully:
-                                        self.preretire_accession(safe_acc_num_str)
+                                        self.preretire_accession(safe_acc_num_str, limit_to_batch=True)
                                         # And since this previously PROCESSED is being retired for a brand new round of processing,
                                         # can leave off the step to INSERT a new blank manifest record.... but, may as well do for both
                                     else:
@@ -8179,12 +8417,13 @@ class OnPrem_Dicom:
                                                     safe_acc_num_str),
                                                     flush=True)
                                         # -vs- the preretirement specific to these mid-processed accessions, only retiring the manifest record:
-                                        self.preretire_accession_manifest_only(safe_acc_num_str)
+                                        self.preretire_accession_manifest_only(safe_acc_num_str, limit_to_batch=True)
                                         # NOTE: the following are additional steps in this rolling back version w/ OnPrem
                                         # and, return its phase_processed to the max phase with a matched cfg:
                                         curr_phase_processed = int_cfgs_max_match_phase
                                         self.rollback_accession_status_phase_processed(safe_acc_num_str,
-                                                                                    int_cfgs_max_match_phase)
+                                                                                    int_cfgs_max_match_phase,
+                                                                                    limit_to_batch=True)
                                     #####
                                     # Then, create a new blank manifest record with the current attributes:
                                     # BATCHES NOTE: INSERT w/ self.batch_insert_update_val:
@@ -8230,7 +8469,7 @@ class OnPrem_Dicom:
                                     ###########################################################
                                     to_generate_whynot_manifest_status_for_previous = True
 
-                            # another PRE-LADDER:
+                            # another PRE-LADDER, to align w/ same location as that for module_gcp_dicom.py:
                             print('r3m0 DEBUG: PRE-LADDER-01 vars before the following if/elif/else ladder: '\
                                         'same_manifest_attributes={0}, '\
                                         'curr_phase_processed={1}, '\
@@ -8623,7 +8862,7 @@ class OnPrem_Dicom:
                         #######################
                         # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                         # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                        # NOTE: this is in the DICOM De-ID modules
+                        # NOTE: this is in all DICOM De-ID modules
                         #######################
                         # at least save some bits from the last exception into status:
                         safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -8982,7 +9221,7 @@ class OnPrem_Dicom:
                             #######################
                             # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                             # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                            # NOTE: this is in the DICOM De-ID modules
+                            # NOTE: this is in all DICOM De-ID modules
                             #######################
                             # at least save some bits from the last exception into status:
                             safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)
@@ -9249,7 +9488,7 @@ class OnPrem_Dicom:
                             #######################
                             # r3m0: WARNING: SQL_UPDATE_QUOTE_TO_REPLACE replacement happens TWICE here
                             # TODO = Q: is that as expected/needed? If not, then tidy this up!
-                            # NOTE: this is in the DICOM De-ID modules
+                            # NOTE: this is in all DICOM De-ID modules
                             #######################
                             # at least save some bits from the last exception into status:
                             safe_exception_str = str(caught_exception).replace(self.locutus_settings.SQL_UPDATE_QUOTE_TO_REPLACE, self.locutus_settings.SQL_UPDATE_QUOTE_REPLACEMENT)

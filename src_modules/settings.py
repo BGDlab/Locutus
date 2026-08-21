@@ -21,7 +21,7 @@ APP_NAME = 'Locutus'
 # NOTE: just found more to do with: APP_VERSION = '2025.06.13at0717=enhance_deploy_scripts_to_use_cmdline_args_for_manifest_and_suffix'
 # BUT FIRST....
 #########
-APP_VERSION = '2026.07.01at1209_enhance_MultiUUID_Resolver_with_MOB_the_new_Manifest-Once_Batch_feature_and_Samba_etc'
+APP_VERSION = '2026.08.19at1542_BatchWorkspace_2enhance_Resolver_and_Migrators_Zombie_Remover_2retain_PROCESSED_with_THEN_post_MultiUUID_Resolver_with_MOB_the_new_Manifest-Once_Batch_feature'
 #########
 # BEWARE of Code Smells all throughout Locutus; so sorry about that, fellow developers.
 # Locutus is most definitely long overdue for a refactoring to clean up some of those smells.
@@ -703,22 +703,22 @@ class Settings:
     # allow overnight testing of large manifests consisting of just a single unique test accession, repeated:
     LOCUTUS_ALLOW_PROCESSING_OF_DUPLICATES = False
     LOCUTUS_ALLOW_PROCESSING_OF_DUPLICATES = get_env_or_config_val(TYPE_BOOL, 'locutus_allow_processing_of_duplicates', config, 'locutus_allow_processing_of_duplicates', def_val=LOCUTUS_ALLOW_PROCESSING_OF_DUPLICATES, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
-    # a deprecated summarizer/onprem option to automatically string any text from input manifest accessions:
+    # *DEPRECATED* DICOM De-ID/Summarizer option to automatically string any text from input manifest accessions:
     LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS = False
     LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_remove_text_from_input_accessions', config, 'locutus_dicom_remove_text_from_input_accessions', def_val=LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     print('WARNING: Settings() just configured LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS={0}.  '\
                 'Please note that this REMOVE_TEXT setting has been deprecated with the Juneteenth 2025 Upgrade '\
                 'to a friendlier alpha-numeric accession aware Locutus'.format(LOCUTUS_DICOM_REMOVE_TEXT_FROM_INPUT_ACCESSIONS), flush=True)
     ##############
-    # Migration: an onprem option to automatically no-longer-used (in the Stager) "zombie" changes/accessions from the Locutus tables, during Phase02 migration:
+    # Migration: a one-off DICOM De-ID Migrator option to automatically re-upgrade any AlphaNumeric upgrades with issues prior to AlphaNumeric upgrade patch.
     LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION = False
     LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_force_alphanum_reupgrade_during_migration', config, 'locutus_dicom_force_alphanum_reupgrade_during_migration', def_val=LOCUTUS_DICOM_FORCE_ALPHANUM_REUPGRADE_DURING_MIGRATION, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     ##############
-    # Migration: an onprem option to automatically no-longer-used (in the Stager) "zombie" changes/accessions from the Locutus tables, during Phase02 migration:
+    # Migration: a DICOM De-ID Migrator option to automatically remove no-longer-used (in the Stager) "zombie" changes/accessions from the Locutus tables, during Phase02 migration:
     LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION = False
     LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_remove_zombie_change_seq_ids_at_migration', config, 'locutus_dicom_remove_zombie_change_seq_ids_at_migration', def_val=LOCUTUS_DICOM_REMOVE_ZOMBIE_CHANGE_SEQ_IDS_AT_MIGRATION, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     ##############
-    # Migration: an onprem option to automatically bypass the Phase02 migration portion entirely, a hot fix to bypass it in the unusual event of failing migration:
+    # Migration: a DICOM De-ID Migrator option to automatically bypass the Phase02 migration portion entirely, a hot fix to bypass it in the unusual event of failing migration:
     LOCUTUS_DICOM_BYPASS_MIGRATION = False
     LOCUTUS_DICOM_BYPASS_MIGRATION = get_env_or_config_val(TYPE_BOOL, 'locutus_dicom_bypass_migration', config, 'locutus_dicom_bypass_migration', def_val=LOCUTUS_DICOM_BYPASS_MIGRATION, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
     #####################
@@ -732,7 +732,7 @@ class Settings:
     # to ensure that no jobs pick up any other jobs at the ending phase sweep
     # (following the manifest Phase 1-3, finding any stragglers for Phase 4 and Phase 5)
     # Should really, therefore, only set locutus_disable_phase_sweep to True when deploying concurrently.
-    # NOTE: currently only supported by ONPREM DICOM (to eventually be used by all):
+    # NOTE: currently only supported by DICOM De-ID modules (to eventually be used by all):
     #####################
     LOCUTUS_DISABLE_PHASE_SWEEP = False
     LOCUTUS_DISABLE_PHASE_SWEEP = get_env_or_config_val(TYPE_BOOL, 'locutus_disable_phase_sweep', config, 'locutus_disable_phase_sweep', def_val=LOCUTUS_DISABLE_PHASE_SWEEP, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
@@ -824,8 +824,8 @@ class Settings:
     # But first, an initial set of unknown defaults (in case subsequently overridden with environment variables):
     PROCESS_DICOM_SUMMARIZE_STATS = False
     LOCUTUS_DICOM_SUMMARIZE_STATS_MANIFEST_CSV = "unknown_LOCUTUS_DICOM_SUMMARIZE_STATS_INPUT_MANIFEST.csv"
-    # and, expected DICOM module table for the summarize/split (either "ONPREM or ???):
-    LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE = "unknown_ONPREM_or_???
+    # and, expected DICOM module table for the summarize/split (either "ONPREM "or otherwise):
+    LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE = "unknown_ONPREM_or_OTHER"
     # and, an option to support more concise weekly manifest-driven stats-only summary reports:
     # (essentially a not LOCUTUS_DICOM_SUMMARIZE_STATS_ONLY_HIDE_ACCESSIONS)
     LOCUTUS_DICOM_SUMMARIZE_STATS_SHOW_ACCESSIONS = True
@@ -889,7 +889,7 @@ class Settings:
         # TODO: harmonize the following two key names across the config and env vars:
         LOCUTUS_DICOM_SUMMARIZE_STATS_MANIFEST_CSV = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_manifest_csv', config, 'dicom_summarize_stats_manifest_csv', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_MANIFEST_CSV, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
-        # expected DICOM module table for the summarize/split (either "ONPREM or "???"):
+        # expected DICOM module table for the summarize/split (either "ONPREM or otherwise):
         # DONE: allow a drop-down for selection of these choices in Jenkins.
         LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_stats_module', config, 'dicom_summarize_stats_module', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_FOR_DICOM_MODULE, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
@@ -903,7 +903,7 @@ class Settings:
         # NOTE: the following SUMMARIZE_DICOM_STAGE may be the same as the ONPREM_DICOM_STAGE:
         LOCUTUS_DICOM_SUMMARIZE_STATS_STAGE_VAULT_PATH = get_env_or_config_val(TYPE_NON_BOOL, 'dicom_summarize_dicom_stage_config_vault_path', config, 'dicom_summarize_dicom_stage_config_vault_path', def_val=LOCUTUS_DICOM_SUMMARIZE_STATS_STAGE_VAULT_PATH, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         # NOTE: OnPrem's Stage Vault Path was just via config, no env;
-        #   get_config_val(config, 'onprem_dicom_stage_config_vault_path', def_val=onprem_DICOM_STAGE_VAULT_PATH, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
+        #   get_config_val(config, 'onprem_dicom_stage_config_vault_path', def_val=ONPREM_DICOM_STAGE_VAULT_PATH, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         # but we may want expose this Summarizer one to Jenkins....
         # ... at least, until we can update our config.yaml files into Vault
         #####################
@@ -1087,7 +1087,7 @@ class Settings:
         # to allow easily re-running the same accession # for benchmarking purposes, etc.,
         LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS = get_env_or_config_val(TYPE_BOOL, 'locutus_debug_onprem_dicom_predelete_accession_status', config, 'locutus_debug_onprem_dicom_predelete_accession_status', def_val=LOCUTUS_ONPREM_DICOM_PREDELETE_ACCESSION_STATUS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
         #####################
-        # a ONPREM-DICOM-specific to allow the pre-retire of an accession numbers manifest attributes,
+        # a ONPREM-DICOM-specific (GCP-DICOM to have its own) to allow the pre-retire of an accession numbers manifest attributes,
         # by updating its accession_num to a negative of itself
         # to allow easily re-running the same accession # for benchmarking purposes, etc.,
         LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS = get_env_or_config_val(TYPE_BOOL, 'locutus_debug_onprem_dicom_preretire_accession_status', config, 'locutus_debug_onprem_dicom_preretire_accession_status', def_val=LOCUTUS_ONPREM_DICOM_PRERETIRE_ACCESSION_STATUS, print_cfg_out=True, verbose=LOCUTUS_VERBOSE)
@@ -1684,7 +1684,7 @@ class Settings:
                                                 ONPREM_BATCH_VIA_DB_HEADER_ACCESSION_NUM,
                                                 ONPREM_BATCH_VIA_DB_HEADER_DEID_QC_STATUS)
 
-            # AS A FIRST PASS, though, maybe just: subject_id
+            # AS A FIRST PASS, maybe just: subject_id (as per NOTE: that other modules' object_info is now typically NULL, even if formerly used)
             # OR, at the least, maybe just: subject_id + object_info / object_info_01?
             # NOTE: leave self.batch_cursor_clause_all as UNQUOTED, since it could be NULL or a quoted string:
             batch_cursor_sql_select='SELECT {0} '\
@@ -2190,7 +2190,7 @@ class Settings:
 
 
         if not parmDBconnSession and parmDBconnectionString:
-            # NOTE: no DBconnSession passed in (e.g., using its own)
+            # NOTE: no DBconnSession passed in (e.g., via using its own)
             # but parmDBconnectionString was passed in to create a temporary SysDBconnSession.
             # So.....
             SysDBconnSession.close()
@@ -2388,7 +2388,7 @@ class Settings:
             sys_status=curr_overall_sys_status
 
         if not parmDBconnSession and parmDBconnectionString:
-            # NOTE: no DBconnSession passed in (e.g., using its own)
+            # NOTE: no DBconnSession passed in (e.g., via using its own)
             # but parmDBconnectionString was passed in to create a temporary SysDBconnSession.
             # So.....
             SysDBconnSession.close()
